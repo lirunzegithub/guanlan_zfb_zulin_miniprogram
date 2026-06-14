@@ -1,0 +1,67 @@
+page {
+  --primary: #2b7cff;
+  --primary-deep: #1a5fd1;
+  --primary-soft: #e8f1ff;
+  --bg: #f4f7fb;
+  --card: #ffffff;
+  --text: #1a1f2e;
+  --text-2: #6b7280;
+  --text-3: #9aa4b2;
+  --line: #eef1f6;
+  --danger: #ff3b30;
+  --warn: #ff8a00;
+  --success: #18b07b;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+view, text, image, button, input { box-sizing: border-box; }
+button::after { border: none; }
+button { background: transparent; padding: 0; margin: 0; line-height: 1; border: none; }
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+.card {
+  background: var(--card);
+  border-radius: 24rpx;
+  padding: 28rpx;
+  box-shadow: 0 4rpx 20rpx rgba(43, 124, 255, 0.04);
+}
+
+.row { display: flex; align-items: center; }
+.between { display: flex; align-items: center; justify-content: space-between; }
+.center { display: flex; align-items: center; justify-content: center; }
+.col { display: flex; flex-direction: column; }
+
+.tag-credit {
+  display: inline-flex;
+  align-items: center;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  background: linear-gradient(90deg, #ff5b5b, #ff2d2d);
+  color: #fff;
+  font-weight: 600;
+}
+
+.fab-service {
+  position: fixed;
+  right: 28rpx;
+  bottom: 200rpx;
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 8rpx 24rpx rgba(43, 124, 255, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.fab-service .ico {
+  width: 44rpx;
+  height: 44rpx;
+}

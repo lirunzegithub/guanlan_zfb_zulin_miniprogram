@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="hero">
+    <view class="hero-title">完善信息隐私政策</view>
+    <view class="hero-sub">版本 v{{version}} · 更新时间 {{updatedAt}}</view>
+  </view>
+
+  <view class="card">
+    <view class="intro">
+      为完成租赁实名认证、订单履约、信用免押及售后服务，本小程序需要收集并使用您的部分个人信息。本政策说明我们收集哪些信息、为什么收集、如何使用、与谁共享、如何保存、以及您享有的权利。请您在勾选"完善信息隐私政策"前仔细阅读。
+    </view>
+
+    <block a:for="{{sections}}" a:for-item="sec" a:key="title">
+      <view class="sec-title">{{sec.title}}</view>
+      <block a:for="{{sec.items}}" a:for-item="line" a:key="*this">
+        <view class="sec-line">{{line}}</view>
+      </block>
+    </block>
+
+    <view class="sec-title">附则</view>
+    <view class="sec-line">本政策与平台《租赁服务协议》中"个人信息与隐私保护"条款共同生效；若两者表述冲突，以本政策为准。</view>
+    <view class="sec-line">如对本政策有任何疑问、投诉或希望行使您的权利，请拨打客服热线 <text class="link" onTap="onCall">400-000-0000</text>，我们将在 15 个工作日内予以回复。</view>
+  </view>
+
+  <view style="height: 40rpx"></view>
+</view>

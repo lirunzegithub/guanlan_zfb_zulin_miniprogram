@@ -1,0 +1,369 @@
+.page {
+  min-height: 100vh;
+  padding-bottom: 220rpx;
+  background: var(--bg);
+}
+
+/* ============ 顶部品牌区 ============ */
+.hero {
+  position: relative;
+  height: 280rpx;
+  padding: 48rpx 40rpx 0;
+  background: linear-gradient(135deg, #5b9bff 0%, #2b7cff 55%, #1a5fd1 100%);
+  overflow: hidden;
+}
+.hero-deco {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+.hero-deco.deco-1 {
+  width: 280rpx; height: 280rpx;
+  right: -90rpx; top: -90rpx;
+}
+.hero-deco.deco-2 {
+  width: 160rpx; height: 160rpx;
+  right: 120rpx; top: 60rpx;
+  background: rgba(255, 255, 255, 0.08);
+}
+.hero-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1;
+}
+.hero-title {
+  font-size: 44rpx;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 1rpx;
+}
+.hero-sub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.82);
+  letter-spacing: 0.5rpx;
+}
+.hero-badge {
+  width: 112rpx; height: 112rpx;
+  background: rgba(255, 255, 255, 0.18);
+  border: 2rpx solid rgba(255, 255, 255, 0.32);
+  border-radius: 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ============ 表单卡片 ============ */
+.form-card {
+  position: relative;
+  margin: -60rpx 28rpx 0;
+  padding: 36rpx 32rpx 12rpx;
+  background: #fff;
+  border-radius: 28rpx;
+  box-shadow: 0 16rpx 40rpx rgba(43, 124, 255, 0.08);
+  z-index: 2;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+.card-bar {
+  width: 6rpx;
+  height: 30rpx;
+  background: linear-gradient(180deg, #5b9bff, #2b7cff);
+  border-radius: 4rpx;
+  margin-right: 16rpx;
+}
+.card-title {
+  flex: 1;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 1rpx;
+}
+.card-tag {
+  display: flex;
+  align-items: center;
+  padding: 6rpx 16rpx;
+  background: var(--primary-soft);
+  border-radius: 100rpx;
+  font-size: 22rpx;
+  color: var(--primary);
+  font-weight: 600;
+}
+.card-tag .ico-lock-mini {
+  margin-right: 8rpx;
+}
+
+/* ============ 表单字段 ============ */
+.field {
+  display: flex;
+  align-items: center;
+  padding: 26rpx 0;
+  border-bottom: 2rpx solid #f1f4fa;
+}
+.field.last {
+  border-bottom: none;
+}
+.ico-wrap {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 20rpx;
+  background: linear-gradient(135deg, #ecf3ff 0%, #dde9ff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 24rpx;
+  flex-shrink: 0;
+}
+.field-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.field-label {
+  font-size: 22rpx;
+  color: var(--text-3);
+  letter-spacing: 1rpx;
+  margin-bottom: 4rpx;
+}
+.field-input {
+  font-size: 30rpx;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.5rpx;
+  line-height: 1.4;
+}
+.field-value {
+  font-size: 30rpx;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.5rpx;
+  line-height: 1.4;
+}
+
+/* ============ 已认证视图 ============ */
+.card-tag.verified-tag {
+  background: rgba(24, 176, 123, 0.12);
+  color: #18b07b;
+  padding: 6rpx 20rpx;
+}
+.verified-tip {
+  margin: 28rpx 40rpx 0;
+  font-size: 22rpx;
+  color: var(--text-3);
+  line-height: 1.6;
+  text-align: center;
+}
+.ph {
+  color: #c5cdd9;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* ============ 同意条款 ============ */
+.agree {
+  display: flex;
+  align-items: center;
+  padding: 32rpx 32rpx 8rpx;
+}
+.check {
+  width: 32rpx;
+  height: 32rpx;
+  border: 3rpx solid #c5cdd9;
+  border-radius: 50%;
+  margin-right: 14rpx;
+  background: #fff;
+  flex-shrink: 0;
+  position: relative;
+  transition: all 0.2s ease;
+}
+.check.on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.check.on::after {
+  content: '';
+  position: absolute;
+  left: 8rpx; top: 4rpx;
+  width: 8rpx; height: 16rpx;
+  border-right: 4rpx solid #fff;
+  border-bottom: 4rpx solid #fff;
+  transform: rotate(45deg);
+}
+.agree-line {
+  font-size: 24rpx;
+  line-height: 1.4;
+}
+.agree-text { color: var(--text-2); }
+.agree-link { color: var(--primary); }
+
+/* ============ 提交按钮 ============ */
+.submit-wrap {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20rpx 32rpx 32rpx;
+  background: linear-gradient(180deg, rgba(244, 247, 251, 0) 0%, #f4f7fb 30%);
+  z-index: 10;
+}
+.submit {
+  height: 96rpx;
+  border-radius: 48rpx;
+  background: linear-gradient(90deg, #a8c4ff 0%, #94b5ff 100%);
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 700;
+  letter-spacing: 4rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
+}
+.submit.on {
+  background: linear-gradient(90deg, #4d8dff 0%, #2b7cff 60%, #1a5fd1 100%);
+  box-shadow: 0 14rpx 28rpx rgba(43, 124, 255, 0.35);
+}
+.submit.on:active {
+  transform: scale(0.985);
+  box-shadow: 0 6rpx 16rpx rgba(43, 124, 255, 0.3);
+}
+
+/* ============ 图标（纯 CSS） ============ */
+/* 人像 */
+.ico-user {
+  width: 36rpx;
+  height: 36rpx;
+  position: relative;
+}
+.ico-user::before {
+  content: '';
+  position: absolute;
+  top: 2rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.ico-user::after {
+  content: '';
+  position: absolute;
+  bottom: 2rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 30rpx;
+  height: 16rpx;
+  border-radius: 16rpx 16rpx 6rpx 6rpx;
+  background: var(--primary);
+}
+
+/* 手机 */
+.ico-phone {
+  width: 24rpx;
+  height: 36rpx;
+  border: 3rpx solid var(--primary);
+  border-radius: 6rpx;
+  position: relative;
+}
+.ico-phone::before {
+  content: '';
+  position: absolute;
+  top: 3rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 10rpx;
+  height: 2rpx;
+  background: var(--primary);
+  border-radius: 2rpx;
+}
+.ico-phone::after {
+  content: '';
+  position: absolute;
+  bottom: 3rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+/* 身份证 */
+.ico-id {
+  width: 40rpx;
+  height: 30rpx;
+  border: 3rpx solid var(--primary);
+  border-radius: 5rpx;
+  position: relative;
+}
+.ico-id::before {
+  content: '';
+  position: absolute;
+  left: 3rpx;
+  top: 3rpx;
+  width: 10rpx;
+  height: 14rpx;
+  background: var(--primary);
+  border-radius: 2rpx;
+}
+.ico-id::after {
+  content: '';
+  position: absolute;
+  right: 4rpx;
+  top: 5rpx;
+  width: 14rpx;
+  height: 3rpx;
+  background: var(--primary);
+  box-shadow: 0 5rpx 0 var(--primary), 0 10rpx 0 var(--primary);
+  border-radius: 2rpx;
+}
+
+/* 顶部盾牌（大） */
+.ico-shield-big {
+  width: 64rpx;
+  height: 72rpx;
+  background: #fff;
+  clip-path: polygon(50% 0%, 100% 22%, 100% 62%, 50% 100%, 0 62%, 0 22%);
+  position: relative;
+}
+.ico-shield-big::after {
+  content: '';
+  position: absolute;
+  left: 18rpx;
+  top: 20rpx;
+  width: 10rpx;
+  height: 22rpx;
+  border-right: 5rpx solid var(--primary);
+  border-bottom: 5rpx solid var(--primary);
+  transform: rotate(45deg);
+}
+
+/* 锁（小，给标签用） */
+.ico-lock-mini {
+  width: 18rpx;
+  height: 22rpx;
+  position: relative;
+  background: var(--primary);
+  border-radius: 3rpx;
+  margin-top: 4rpx;
+}
+.ico-lock-mini::before {
+  content: '';
+  position: absolute;
+  top: -8rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12rpx;
+  height: 10rpx;
+  border: 3rpx solid var(--primary);
+  border-bottom: none;
+  border-radius: 8rpx 8rpx 0 0;
+}
+

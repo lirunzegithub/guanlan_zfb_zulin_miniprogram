@@ -1,0 +1,81 @@
+<view class="page">
+  <!-- 顶部 tab -->
+  <view class="tabs">
+    <block a:for="{{tabs}}" a:key="key">
+      <view
+        class="tab {{tab === item.key ? 'on' : ''}}"
+        data-key="{{item.key}}"
+        onTap="onTabTap">
+        {{item.name}}
+      </view>
+    </block>
+  </view>
+
+  <!-- 我的优惠券列表 -->
+  <view class="section">
+    <view class="sec-title">{{tab === 'unused' ? '我的可用券' : (tab === 'used' ? '已使用' : '已失效')}}</view>
+
+    <block a:if="{{myList.length > 0}}">
+      <block a:for="{{myList}}" a:key="id">
+        <view class="coupon-card {{tab !== 'unused' ? 'is-mute' : ''}}">
+          <view class="cp-left">
+            <view class="cp-discount">
+              <text class="cp-cny">¥</text>
+              <text class="cp-num">{{item.discountText}}</text>
+            </view>
+            <view class="cp-thresh">满 ¥{{item.thresholdText}} 可用</view>
+          </view>
+          <view class="cp-divider"></view>
+          <view class="cp-right">
+            <view class="cp-name">{{item.name}}</view>
+            <view class="cp-meta">{{item.rangeText}}</view>
+            <view a:if="{{tab === 'unused'}}" class="cp-tag">立即下单使用</view>
+            <view a:elif="{{tab === 'used'}}" class="cp-tag muted">订单：{{item.order_id || '-'}}</view>
+            <view a:else class="cp-tag muted">已过期</view>
+          </view>
+          <view a:if="{{tab !== 'unused'}}" class="cp-stamp">{{tab === 'used' ? '已用' : '失效'}}</view>
+        </view>
+      </block>
+    </block>
+
+    <view a:else class="empty">
+      <view class="empty-ico">🎫</view>
+      <view class="empty-tip">{{tab === 'unused' ? '当前没有可用优惠券' : (tab === 'used' ? '还没有使用过优惠券' : '没有失效的优惠券')}}</view>
+      <view a:if="{{tab === 'unused'}}" class="empty-btn" onTap="onGoShop">去逛逛</view>
+    </view>
+  </view>
+
+  <!-- 优惠券中心：在售券（可领取） -->
+  <view a:if="{{centerList.length > 0}}" class="section">
+    <view class="sec-title">优惠券中心</view>
+    <block a:for="{{centerList}}" a:key="id">
+      <view class="coupon-card">
+        <view class="cp-left">
+          <view class="cp-discount">
+            <text class="cp-cny">¥</text>
+            <text class="cp-num">{{item.discountText}}</text>
+          </view>
+          <view class="cp-thresh">满 ¥{{item.thresholdText}} 可用</view>
+        </view>
+        <view class="cp-divider"></view>
+        <view class="cp-right">
+          <view class="cp-name">{{item.name}}</view>
+          <view class="cp-meta">{{item.rangeText}}</view>
+          <view a:if="{{item.user_held > 0}}" class="cp-tag muted">
+            已领 {{item.user_held}} 张{{item.claimable ? '，可继续领取' : '（已达上限）'}}
+          </view>
+          <view a:elif="{{item.sold_out}}" class="cp-tag muted">库存已抢光</view>
+          <view a:else class="cp-tag">每人限领 {{item.per_user_limit > 0 ? item.per_user_limit : '不限'}} 张</view>
+        </view>
+        <view
+          class="cp-claim {{item.claimable && !item.sold_out ? '' : 'disabled'}}"
+          data-id="{{item.id}}"
+          onTap="onClaim">
+          {{item.sold_out ? '已抢光' : (item.claimable ? '立即领取' : '已领取')}}
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <view style="height:40rpx"></view>
+</view>

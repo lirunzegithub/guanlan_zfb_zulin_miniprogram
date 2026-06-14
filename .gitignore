@@ -1,0 +1,35 @@
+# ===== 系统 =====
+.DS_Store
+*.log
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ===== 敏感凭据（务必忽略，否则提交即泄露）=====
+.env
+.env.*
+houdan/rsa_keys/*.pem
+keys/
+
+# ===== 运行期数据（自动生成 / 含业务数据，不入库）=====
+houdan/data/*.db
+houdan/data/*.db-shm
+houdan/data/*.db-wal
+houdan/data/*.json
+houdan/data/*.json.migrated
+# 用户上传的素材
+houdan/static/products/uploads/
+
+# ===== IDE =====
+.idea/
+.vscode/
+
+# ===== 小程序开发者工具 =====
+qianduan/node_modules/
+qianduan/.tea/
+qianduan/.idea/

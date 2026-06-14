@@ -1,0 +1,217 @@
+.page { padding: 24rpx 24rpx 40rpx; }
+
+/* 顶部 Banner */
+.hero {
+  position: relative;
+  height: 380rpx;
+  border-radius: 28rpx;
+  overflow: hidden;
+  margin-bottom: 24rpx;
+}
+/* swiper 版需要把内层 swiper-item / slide 都铺满 */
+.hero-swiper { display: block; width: 100%; }
+.hero-swiper swiper-item { width: 100%; height: 100%; }
+.hero-slide {
+  position: relative;
+  width: 100%; height: 100%;
+  overflow: hidden;
+}
+.hero-img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+}
+.hero-slide .hero-content {
+  /* swiper 模式下加一层 0→透明 的渐变蒙板，保证白字在亮图上也读得清 */
+  background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.45) 100%);
+  left: 0; right: 0; bottom: 0;
+  padding: 24rpx 32rpx 36rpx;
+}
+.hero-bg {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 30% 40%, rgba(255,180,90,0.55), transparent 55%),
+    radial-gradient(circle at 80% 70%, rgba(255,90,90,0.45), transparent 50%),
+    linear-gradient(135deg, #2a2018 0%, #43271a 100%);
+}
+.hero-content {
+  position: absolute; left: 32rpx; bottom: 36rpx;
+  color: #fff;
+}
+.hero-brand { display: flex; align-items: center; }
+.meta {
+  font-size: 44rpx; font-weight: 800;
+  background: linear-gradient(90deg,#3a8dff,#5b6bff);
+  -webkit-background-clip: text; color: transparent;
+  margin-right: 12rpx;
+}
+.brand-text { font-size: 44rpx; font-weight: 700; letter-spacing: 1rpx; }
+.hero-sub { display:block; font-size: 26rpx; opacity: .85; margin-top: 6rpx; }
+
+.hero-deco { position: absolute; border-radius: 50%; opacity: .25; }
+.hero-deco.c1 { width: 180rpx; height: 180rpx; background: #ffd28b; right: -40rpx; top: -40rpx; }
+.hero-deco.c2 { width: 90rpx; height: 90rpx; background: #fff; right: 80rpx; top: 110rpx; opacity:.15; }
+.hero-deco.c3 { width: 40rpx; height: 40rpx; background: #fff; right: 200rpx; top: 60rpx; opacity:.2; }
+
+/* 三宫格（再压一档：~110rpx 高，仅展示文字标识） */
+.quick {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 12rpx;
+  margin-bottom: 18rpx;
+}
+.quick-item {
+  height: 110rpx;
+  border-radius: 16rpx;
+  overflow: hidden;
+  position: relative;
+  padding: 12rpx 16rpx;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.q1 {
+  background: linear-gradient(160deg, #fff5d6 0%, #ffd45a 100%);
+}
+.q1-title { font-size: 24rpx; font-weight: 800; color: #1a1f2e; line-height: 1.2; }
+.q1-sub {
+  display: inline-block;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 16rpx;
+  padding: 1rpx 10rpx;
+  border-radius: 12rpx;
+  margin-top: 4rpx;
+  align-self: flex-start;
+}
+
+/* 已认证态：绿色渐变 + 右上角对勾徽标 */
+.q1.verified {
+  background: linear-gradient(160deg, #d6f5d6 0%, #18b07b 100%);
+}
+.q1.verified .q1-title {
+  color: #fff;
+  text-shadow: 0 1rpx 2rpx rgba(0,0,0,0.15);
+}
+.q1-check {
+  position: absolute;
+  top: 10rpx; right: 10rpx;
+  width: 30rpx; height: 30rpx;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.92);
+  display: flex; align-items: center; justify-content: center;
+}
+.q1-check-ico {
+  color: #18b07b;
+  font-size: 22rpx;
+  font-weight: 800;
+  line-height: 1;
+}
+.q2 {
+  background: linear-gradient(160deg, #ff5b8c 0%, #ff2360 100%);
+  color: #fff;
+}
+.q2-title {
+  font-size: 24rpx; font-weight: 800; letter-spacing: 1rpx;
+  position: relative; z-index: 1;
+}
+.q2-pic {
+  position: absolute; right: -6rpx; bottom: -6rpx;
+  width: 60rpx; height: 60rpx;
+  background: rgba(255,255,255,0.18);
+  border-radius: 10rpx;
+  transform: rotate(-8deg);
+}
+
+.q3 {
+  background: linear-gradient(160deg, #ffe7c2 0%, #ff8a3d 100%);
+  color: #5a2a00;
+}
+.q3-badge {
+  position: absolute; top: 8rpx; right: 8rpx;
+  background: #ff2d2d; color:#fff;
+  padding: 1rpx 8rpx;
+  border-radius: 5rpx;
+  font-size: 16rpx; font-weight: 700;
+}
+.q3-title { font-size: 24rpx; font-weight: 800; position: relative; z-index: 1; }
+.q3-pic {
+  position: absolute; right: -12rpx; bottom: -12rpx;
+  width: 60rpx; height: 60rpx;
+  background: linear-gradient(135deg,#fff,#f0d8b8);
+  border-radius: 50%;
+  opacity: .65;
+}
+
+/* 品牌卡片 */
+.brands {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+.brand-card {
+  height: 180rpx;
+  border-radius: 20rpx;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border: 4rpx solid transparent;
+  position: relative;
+}
+.brand-dji {
+  background: #1c66ff;
+  border-color: #2b7cff;
+}
+.brand-dji .b-logo { color: #fff; font-size: 56rpx; font-weight: 800; font-style: italic; letter-spacing: 4rpx; }
+.brand-dji .b-sub { color: rgba(255,255,255,0.85); font-size: 22rpx; margin-top: 6rpx; }
+
+.brand-insta {
+  background: #ffd944;
+  border-color: #ffb800;
+}
+.brand-insta .b-logo { color: #1a1f2e; font-size: 32rpx; font-weight: 800; }
+.brand-insta .b-sub { color: #4a3a00; font-size: 22rpx; margin-top: 6rpx; }
+
+/* 商品流 */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+}
+.goods {
+  background: #fff;
+  border-radius: 20rpx;
+  overflow: hidden;
+  padding-bottom: 16rpx;
+}
+.goods-img {
+  height: 240rpx;
+  position: relative;
+  background: linear-gradient(135deg, #f4f7fb 0%, #dde6ef 100%);
+}
+.goods-tag {
+  position: absolute; top: 12rpx; left: 12rpx;
+  background: linear-gradient(90deg,#ff5b5b,#ff2d2d);
+  color: #fff;
+  font-size: 18rpx; font-weight: 700;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+}
+.goods-name {
+  font-size: 26rpx;
+  color: #1a1f2e;
+  font-weight: 600;
+  padding: 16rpx 16rpx 0;
+  /* line-clamp simulation */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goods-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8rpx 16rpx 0;
+}
+.price { color: #ff2d2d; font-weight: 800; font-size: 28rpx; }
+.goods-sales { color: #9aa4b2; font-size: 20rpx; }

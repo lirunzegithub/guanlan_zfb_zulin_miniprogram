@@ -1,0 +1,71 @@
+<view class="page">
+
+  <!-- 顶部 Tab + 主页图标 -->
+  <view class="head">
+    <view class="home-btn" onTap="goHome">
+      <view class="home-ico"></view>
+    </view>
+    <scroll-view scroll-x class="tabs" show-scrollbar="{{false}}">
+      <view class="tabs-inner">
+        <block a:for="{{tabs}}" a:key="key">
+          <view class="tab {{cur === item.key ? 'active' : ''}}"
+                data-key="{{item.key}}" onTap="onTab">
+            {{item.name}}
+          </view>
+        </block>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 列表 -->
+  <view a:if="{{list.length > 0}}" class="order-list">
+    <block a:for="{{list}}" a:key="id">
+      <view class="o-card" data-id="{{item.id}}" onTap="goDetail">
+        <view class="o-row">
+          <text class="o-id">订单号：{{item.id}}</text>
+          <text class="o-status">{{item._statusText}}</text>
+        </view>
+        <view class="o-body">
+          <view class="o-thumb">
+            <image a:if="{{item.product_cover}}" class="o-thumb-img" src="{{item.product_cover}}" mode="aspectFill" />
+            <block a:else>
+              <view class="o-thumb-tag">仅限</view>
+              <view class="o-thumb-tag2">「免押认证」</view>
+              <view class="o-thumb-bot">{{item._shortName}}</view>
+            </block>
+          </view>
+          <view class="o-info">
+            <view class="o-name">{{item.product_name}}</view>
+            <view class="o-meta">租期：{{item._startDate}} ~ {{item._endDate}}</view>
+            <view class="o-amount">¥{{item._amountText}} 元</view>
+          </view>
+        </view>
+        <view a:if="{{item._action || item._canCancel}}" class="o-actions" catchTap="noop">
+          <view a:if="{{item._canCancel}}" class="o-btn ghost" data-id="{{item.id}}" catchTap="onCancel">取消订单</view>
+          <view a:if="{{item._action}}"
+                class="o-btn {{item._action.primary ? 'primary' : 'ghost'}}"
+                data-id="{{item.id}}" data-key="{{item._action.key}}"
+                catchTap="onAction">{{item._action.label}}</view>
+        </view>
+      </view>
+    </block>
+    <view class="bottom-tip">~ 到底啦 ~</view>
+  </view>
+
+  <!-- 空态 -->
+  <view a:elif="{{loaded}}" class="empty">
+    <view class="empty-illu">
+      <view class="il-cloud c1"></view>
+      <view class="il-cloud c2"></view>
+      <view class="il-board">
+        <view class="il-line"></view>
+        <view class="il-line"></view>
+        <view class="il-line"></view>
+      </view>
+      <view class="il-tree t1"></view>
+      <view class="il-tree t2"></view>
+      <view class="il-floor"></view>
+    </view>
+    <view class="empty-text">暂无订单</view>
+  </view>
+</view>

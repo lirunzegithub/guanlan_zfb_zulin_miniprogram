@@ -1,0 +1,13 @@
+# 观澜数码租赁 后端依赖
+# 安装：pip install -r requirements.txt
+
+Flask>=3.0,<4.0
+flask-cors>=4.0
+requests>=2.31
+
+# 支付宝开放平台官方 SDK（会一并拉入 pycryptodome 用于 RSA/AES 签名加密）
+alipay-sdk-python>=3.7.603
+pycryptodome>=3.20
+
+# 生产部署可选：用 gunicorn 跑（开发用 run.py 自带的 Flask 服务器即可）
+gunicorn>=21.2; platform_system != "Windows"

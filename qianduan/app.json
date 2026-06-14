@@ -1,0 +1,60 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/category/category",
+    "pages/service/service",
+    "pages/mine/mine",
+    "pages/login/login",
+    "pages/identity/identity",
+    "pages/order-list/order-list",
+    "pages/order-detail/order-detail",
+    "pages/refund-apply/refund-apply",
+    "pages/product/product",
+    "pages/info/info",
+    "pages/addresses/addresses",
+    "pages/address-edit/address-edit",
+    "pages/agreement/agreement",
+    "pages/privacy/privacy",
+    "pages/favorites/favorites",
+    "pages/coupons/coupons"
+  ],
+  "window": {
+    "defaultTitle": "观澜数码租赁",
+    "titleBarColor": "#ffffff",
+    "backgroundColor": "#f4f7fb",
+    "pullRefresh": false,
+    "allowsBounceVertical": "NO"
+  },
+  "tabBar": {
+    "textColor": "#9aa4b2",
+    "selectedColor": "#2b7cff",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "items": [
+      {
+        "pagePath": "pages/index/index",
+        "name": "首页",
+        "icon": "images/tab-home.png",
+        "activeIcon": "images/tab-home-active.png"
+      },
+      {
+        "pagePath": "pages/category/category",
+        "name": "分类",
+        "icon": "images/tab-cat.png",
+        "activeIcon": "images/tab-cat-active.png"
+      },
+      {
+        "pagePath": "pages/service/service",
+        "name": "客服",
+        "icon": "images/tab-service.png",
+        "activeIcon": "images/tab-service-active.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "name": "我的",
+        "icon": "images/tab-mine.png",
+        "activeIcon": "images/tab-mine-active.png"
+      }
+    ]
+  }
+}

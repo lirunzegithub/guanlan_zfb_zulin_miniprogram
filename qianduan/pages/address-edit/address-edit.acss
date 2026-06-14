@@ -1,0 +1,101 @@
+.page { padding: 24rpx; min-height: 100vh; }
+
+/* 支付宝读取按钮 */
+.alipay-card {
+  background: linear-gradient(135deg, #eaf2ff 0%, #d8e7ff 100%);
+  border-radius: 20rpx;
+  padding: 28rpx;
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+.alipay-l { display: flex; align-items: center; gap: 18rpx; }
+.alipay-ico {
+  width: 72rpx; height: 72rpx;
+  background: var(--primary);
+  border-radius: 18rpx;
+  position: relative;
+  flex-shrink: 0;
+}
+.alipay-ico::before {
+  content: '支'; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 36rpx; font-weight: 800;
+}
+.alipay-t { font-size: 28rpx; font-weight: 700; color: var(--primary); }
+.alipay-s { font-size: 22rpx; color: #4a5060; margin-top: 6rpx; }
+.arrow { font-size: 36rpx; color: var(--primary); }
+
+/* 表单 */
+.card { background: #fff; border-radius: 20rpx; padding: 24rpx 28rpx 28rpx; }
+.card-title {
+  font-size: 28rpx; font-weight: 700; color: #1a1f2e;
+  padding-bottom: 20rpx; margin-bottom: 12rpx;
+  border-bottom: 1rpx solid var(--line);
+}
+.field {
+  display: flex; align-items: center;
+  padding: 22rpx 0;
+  border-bottom: 1rpx solid var(--line);
+}
+.field:last-of-type { border-bottom: none; }
+.label {
+  width: 140rpx;
+  font-size: 26rpx;
+  color: #4a5060;
+  flex-shrink: 0;
+}
+.input {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1a1f2e;
+}
+.ph { color: #c5cdd9; }
+
+.default-row {
+  display: flex; align-items: center; gap: 12rpx;
+  padding-top: 24rpx;
+  font-size: 26rpx;
+  color: #4a5060;
+}
+.check {
+  width: 32rpx; height: 32rpx;
+  border: 3rpx solid #c5cdd9;
+  border-radius: 50%;
+  background: #fff;
+}
+.check.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  position: relative;
+}
+.check.on::after {
+  content: '';
+  position: absolute;
+  left: 8rpx; top: 4rpx;
+  width: 8rpx; height: 16rpx;
+  border-right: 4rpx solid #fff;
+  border-bottom: 4rpx solid #fff;
+  transform: rotate(45deg);
+}
+.src-tag {
+  margin-left: auto;
+  font-size: 20rpx;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 4rpx 12rpx;
+  border-radius: 10rpx;
+}
+
+.submit {
+  height: 88rpx;
+  border-radius: 44rpx;
+  background: linear-gradient(90deg, #8db8ff 0%, #6aa2ff 100%);
+  color: #fff;
+  font-size: 30rpx; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 32rpx;
+}
+.submit.on {
+  background: linear-gradient(90deg, #4d8dff 0%, #2b7cff 100%);
+  box-shadow: 0 12rpx 24rpx rgba(43, 124, 255, 0.25);
+}

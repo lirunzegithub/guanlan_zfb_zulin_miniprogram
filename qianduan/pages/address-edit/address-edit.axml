@@ -1,0 +1,55 @@
+<view class="page">
+
+  <!-- 从支付宝读取 -->
+  <view class="alipay-card" onTap="onPickFromAlipay">
+    <view class="alipay-l">
+      <view class="alipay-ico"></view>
+      <view>
+        <view class="alipay-t">从支付宝读取地址</view>
+        <view class="alipay-s">已在支付宝维护过地址？一键填入，可再修改</view>
+      </view>
+    </view>
+    <text class="arrow">›</text>
+  </view>
+
+  <!-- 表单 -->
+  <view class="card">
+    <view class="card-title">收货信息</view>
+
+    <view class="field">
+      <text class="label">收货人</text>
+      <input class="input" placeholder="请输入姓名" placeholder-class="ph"
+             value="{{form.receiver_name}}" data-k="receiver_name" onInput="onInput"/>
+    </view>
+    <view class="field">
+      <text class="label">手机号</text>
+      <input class="input" placeholder="请输入手机号" placeholder-class="ph"
+             type="number" maxlength="11"
+             value="{{form.receiver_phone}}" data-k="receiver_phone" onInput="onInput"/>
+    </view>
+    <view class="field">
+      <text class="label">省市区</text>
+      <input class="input" placeholder="如：海南省 海口市 龙华区" placeholder-class="ph"
+             value="{{form._pca}}" data-k="_pca" onInput="onInputPca" onBlur="onBlurPca"/>
+    </view>
+    <view class="field">
+      <text class="label">详细地址</text>
+      <input class="input" placeholder="街道、楼栋、门牌号" placeholder-class="ph"
+             value="{{form.detail}}" data-k="detail" onInput="onInput"/>
+    </view>
+    <view class="field">
+      <text class="label">邮编</text>
+      <input class="input" placeholder="可不填" placeholder-class="ph"
+             type="number" maxlength="6"
+             value="{{form.zip_code}}" data-k="zip_code" onInput="onInput"/>
+    </view>
+
+    <view class="default-row" onTap="toggleDefault">
+      <view class="check {{form.is_default ? 'on' : ''}}"></view>
+      <text>设为默认地址</text>
+      <text a:if="{{form.source === 'alipay'}}" class="src-tag">数据来源：支付宝</text>
+    </view>
+  </view>
+
+  <view class="submit {{canSubmit ? 'on' : ''}}" onTap="onSubmit">{{form.id ? '保存修改' : '保存地址'}}</view>
+</view>

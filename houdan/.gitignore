@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 系统
+.DS_Store
+*.log
+
+# 敏感配置（必须 .gitignore，否则提交即泄露）
+.env
+.env.local
+# 只忽略真实密钥，保留 *.example 占位与目录内 README
+rsa_keys/*.pem
+keys/
+
+# 本地数据库 / 运行期数据（自动生成 / 含业务数据）
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.json
+data/*.json.migrated
+
+# IDE
+.idea/
+.vscode/

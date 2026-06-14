@@ -1,0 +1,86 @@
+<view class="page">
+
+  <!-- 顶部主 Banner -->
+  <!-- 有后台配置的图：渲染轮播图（多张支持自动播放） -->
+  <swiper
+    a:if="{{heroes.length > 0}}"
+    class="hero hero-swiper"
+    autoplay="{{heroes.length > 1}}"
+    interval="4000"
+    duration="500"
+    circular="{{heroes.length > 1}}"
+    indicator-dots="{{heroes.length > 1}}"
+    indicator-color="rgba(255,255,255,0.45)"
+    indicator-active-color="#ffffff"
+  >
+    <block a:for="{{heroes}}" a:key="id">
+      <swiper-item>
+        <view class="hero-slide" data-id="{{item.id}}" onTap="onBannerTap">
+          <image a:if="{{item.image_url}}" class="hero-img" src="{{item.image_url}}" mode="aspectFill" />
+          <view a:else class="hero-bg"></view>
+          <view a:if="{{item.title || item.subtitle}}" class="hero-content">
+            <view a:if="{{item.title}}" class="hero-brand">
+              <text class="brand-text">{{item.title}}</text>
+            </view>
+            <text a:if="{{item.subtitle}}" class="hero-sub">{{item.subtitle}}</text>
+          </view>
+        </view>
+      </swiper-item>
+    </block>
+  </swiper>
+
+  <!-- 未配置任何 banner：保留装饰性占位（默认 hero） -->
+  <view a:else class="hero">
+    <view class="hero-bg"></view>
+    <view class="hero-content">
+      <view class="hero-brand">
+        <text class="meta">M</text>
+        <text class="brand-text">{{hero.title}}</text>
+      </view>
+      <text class="hero-sub">{{hero.sub}}</text>
+    </view>
+    <view class="hero-deco c1"></view>
+    <view class="hero-deco c2"></view>
+    <view class="hero-deco c3"></view>
+  </view>
+
+  <!-- 三宫格：免押认证 / 新品上市 / HOT -->
+  <view class="quick">
+    <view class="quick-item q1 {{verified ? 'verified' : ''}}" onTap="onCreditAuth">
+      <block a:if="{{verified}}">
+        <view class="q1-check"><text class="q1-check-ico">✓</text></view>
+        <view class="q1-title">已实名认证</view>
+      </block>
+      <block a:else>
+        <view class="q1-title">免押认证</view>
+        <view class="q1-sub">点击此处</view>
+      </block>
+    </view>
+
+    <view class="quick-item q2" onTap="onAftersale">
+      <text class="q2-title">售后无忧</text>
+      <view class="q2-pic"></view>
+    </view>
+
+    <view class="quick-item q3" onTap="onSafety">
+      <text class="q3-title">流程安全</text>
+      <view class="q3-pic"></view>
+    </view>
+  </view>
+
+  <!-- 商品流（两列） -->
+  <view class="grid">
+    <block a:for="{{products}}" a:key="id">
+      <view class="goods" onTap="onGoods" data-id="{{item.id}}">
+        <view class="goods-img" style="background:{{item.bg}}"></view>
+        <view class="goods-name">{{item.name}}</view>
+        <view class="goods-meta">
+          <text class="price">¥{{item.min_price}} 起</text>
+          <text class="goods-sales">租赁量 {{item.sales}}</text>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <view style="height:40rpx"></view>
+</view>

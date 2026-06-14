@@ -1,0 +1,523 @@
+<view class="page" a:if="{{p.id}}">
+
+  <!-- 商品主图：covers 多张 → swiper 轮播；无图时退化为 p.bg 占位 -->
+  <view class="hero">
+    <swiper
+      a:if="{{p.covers && p.covers.length}}"
+      class="hero-swiper"
+      autoplay="{{p.covers.length > 1}}"
+      interval="4000"
+      circular="{{p.covers.length > 1}}"
+      indicator-dots="{{p.covers.length > 1}}"
+      indicator-color="rgba(255,255,255,0.55)"
+      indicator-active-color="#ffffff"
+    >
+      <block a:for="{{p.covers}}" a:key="*this">
+        <swiper-item>
+          <image class="hero-img" src="{{item}}" mode="aspectFill" />
+        </swiper-item>
+      </block>
+    </swiper>
+    <view a:else class="hero-fallback" style="background:{{p.bg}}"></view>
+  </view>
+
+  <!-- 芝麻信用横幅（按官方品牌规范：LOGO + 完整版"芝麻信用｜免押金" + 辅助说明） -->
+  <view class="zhima-bar">
+    <image class="zmxy-logo" src="/images/zmxy-logo.png" mode="aspectFit" />
+    <text class="zmxy-brand">芝麻信用｜免押金</text>
+    <text class="zhima-bar-sub">芝麻分≥600可享</text>
+  </view>
+
+  <!-- 价格 + 折扣 -->
+  <view class="card price-card">
+    <view class="promo-row">
+      <text class="rented">已租赁 {{p.rented_count}}</text>
+    </view>
+    <view class="price-row">
+      <text class="cny">¥</text>
+      <text class="price">{{p.min_price}}</text>
+      <text class="unit">元/天起</text>
+    </view>
+  </view>
+
+  <!-- 标题 -->
+  <view class="card title-card">
+    <view class="t-name">{{p.name}}</view>
+  </view>
+
+  <!-- 满减券（活动期内可领可用，详情入口） -->
+  <view a:if="{{coupons && coupons.length}}" class="card coupon-card-detail" onTap="openCouponCenter">
+    <view class="cp-detail-h">
+      <text class="cp-detail-title">满减优惠</text>
+      <text class="cp-detail-more">领券中心 ›</text>
+    </view>
+    <scroll-view class="cp-detail-scroll" scroll-x>
+      <view class="cp-detail-row">
+        <block a:for="{{coupons}}" a:key="id">
+          <view class="cp-mini">
+            <view class="cp-mini-l">
+              <text class="cp-mini-cny">¥</text>
+              <text class="cp-mini-num">{{item.discountText}}</text>
+            </view>
+            <view class="cp-mini-r">
+              <view class="cp-mini-name">{{item.name}}</view>
+              <view class="cp-mini-th">满 ¥{{item.thresholdText}} 可用</view>
+              <view a:if="{{item.user_unused > 0}}" class="cp-mini-state owned">已领可用</view>
+              <view a:elif="{{item.sold_out}}" class="cp-mini-state mute">已抢光</view>
+              <view a:elif="{{!item.claimable}}" class="cp-mini-state mute">已达上限</view>
+              <view a:else class="cp-mini-state act" data-id="{{item.id}}" catchTap="onClaimFromDetail">立即领取</view>
+            </view>
+          </view>
+        </block>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 长租折线图 -->
+  <view class="card chart-card">
+    <view class="chart-head">
+      <text class="chart-title">长租优惠:</text>
+      <text class="chart-min">¥{{p.min_price}} /天起</text>
+    </view>
+    <view class="chart">
+      <view class="chart-y">
+        <block a:for="{{yTicks}}" a:key="*this">
+          <text>{{item}}</text>
+        </block>
+      </view>
+      <view class="chart-area">
+        <view class="grid-line" style="bottom: 0%"></view>
+        <view class="grid-line" style="bottom: 25%"></view>
+        <view class="grid-line" style="bottom: 50%"></view>
+        <view class="grid-line" style="bottom: 75%"></view>
+        <view class="grid-line" style="bottom: 100%"></view>
+        <!-- 直线段（折线图） -->
+        <block a:for="{{curveSegs}}" a:key="*this">
+          <view
+            class="seg"
+            style="left:{{item.left}}%; bottom:{{item.bottom}}%; width:{{item.length}}px; transform: rotate({{item.angle}}deg); -webkit-transform: rotate({{item.angle}}deg);"
+          ></view>
+        </block>
+        <view class="curve">
+          <block a:for="{{curvePts}}" a:key="day">
+            <view
+              class="dot-hit"
+              style="left:{{item.x}}%; bottom:{{item.y}}%"
+              data-i="{{index}}"
+              onTap="onDotTap"
+            >
+              <view class="dot {{tip.show && tip.index === index ? 'active' : ''}}"></view>
+            </view>
+          </block>
+        </view>
+        <view a:if="{{tip.show}}" class="tip" style="left:{{tip.x}}%; bottom:{{tip.y}}%">
+          <text class="tip-line">{{tip.day}}天</text>
+          <text class="tip-line tip-price">¥{{tip.price}}/天</text>
+        </view>
+        <view class="chart-x">
+          <text class="chart-x-tick" style="left:0%">1天</text>
+          <text class="chart-x-tick" style="left:13.79%">5天</text>
+          <text class="chart-x-tick" style="left:31.03%">10天</text>
+          <text class="chart-x-tick" style="left:48.28%">15天</text>
+          <text class="chart-x-tick" style="left:65.52%">20天</text>
+          <text class="chart-x-tick" style="left:82.76%">25天</text>
+          <text class="chart-x-tick" style="left:100%">30天</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 规格 / 发货 / 租金分段 -->
+  <view class="card info-card">
+    <view class="info-row" onTap="onSpec">
+      <text class="info-k">规格</text>
+      <view class="info-v">
+        <text class="ph">{{p.spec_placeholder}}</text>
+        <text class="arrow">›</text>
+      </view>
+    </view>
+    <view class="info-row">
+      <text class="info-k">发货</text>
+      <view class="info-v"><text>{{p.shipping}}</text></view>
+    </view>
+    <view a:if="{{tierTexts && tierTexts.length}}" class="info-row tiers">
+      <text class="info-k">租金</text>
+      <view class="info-v multi">
+        <block a:for="{{tierTexts}}" a:key="from">
+          <view class="tier-line">
+            <text class="tier-range">{{item.label}}</text>
+            <text class="tier-price">¥{{item.price}} /天</text>
+          </view>
+        </block>
+      </view>
+    </view>
+    <view class="rights-row">
+      <block a:for="{{p.rights}}" a:key="key">
+        <view class="right-item">
+          <view class="r-ico r-{{item.icon}}"></view>
+          <text>{{item.label}}</text>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <!-- 发货时间说明 -->
+  <view class="card note-card">
+    <view class="note-title">发货时间说明</view>
+    <view class="note-body">{{p.shipping_note}}</view>
+  </view>
+
+  <!-- 评价 -->
+  <view class="card review-card">
+    <view class="review-head">
+      <text class="review-title">评价列表（{{p.comments_total || 0}}）</text>
+      <!-- 评价入口已迁到「订单详情·已归还」状态。商品详情仅展示评价不再允许直接发评 -->
+    </view>
+    <block a:if="{{p.comments && p.comments.length}}">
+      <block a:for="{{p.comments}}" a:for-item="cmt" a:for-index="ci" a:key="id">
+        <view class="rev-item">
+          <view class="rev-top">
+            <view class="rev-avatar" style="background:{{cmt.avatar_color}}"></view>
+            <view class="rev-info">
+              <view class="rev-name">{{cmt.user}}</view>
+              <view class="rev-stars">
+                <block a:for="{{[1,2,3,4,5]}}" a:for-item="s" a:key="*this">
+                  <text class="star {{s <= cmt.stars ? 'on' : ''}}">★</text>
+                </block>
+              </view>
+            </view>
+            <text class="rev-time">{{cmt.time}}</text>
+          </view>
+          <view class="rev-text">{{cmt.content}}</view>
+          <view a:if="{{cmt.images && cmt.images.length}}" class="rev-imgs">
+            <block a:for="{{cmt.images}}" a:for-item="img" a:for-index="ii" a:key="*this">
+              <view class="rev-img-cell" data-ci="{{ci}}" data-i="{{ii}}" onTap="onPreviewCmtImage">
+                <image class="rev-img" src="{{img}}" mode="aspectFill" />
+              </view>
+            </block>
+          </view>
+        </view>
+      </block>
+    </block>
+    <view a:else class="rev-empty">暂无评价，来做第一个评价的人吧～</view>
+  </view>
+
+  <!-- 评价输入弹层 -->
+  <view a:if="{{commentModal}}" class="cmt-mask" onTap="closeCommentModal">
+    <view class="cmt-modal" catchTap="noop">
+      <view class="cmt-h">发表评价</view>
+      <view class="cmt-body">
+        <view class="cmt-stars">
+          <block a:for="{{[1,2,3,4,5]}}" a:key="*this">
+            <text
+              class="cmt-star {{item <= cmtForm.stars ? 'on' : ''}}"
+              data-v="{{item}}"
+              onTap="onPickStar">★</text>
+          </block>
+          <text class="cmt-star-tip">{{cmtForm.stars}} 星</text>
+        </view>
+        <textarea
+          class="cmt-input"
+          placeholder="说点什么，帮助其他用户了解这件商品..."
+          maxlength="500"
+          show-count="{{true}}"
+          value="{{cmtForm.content}}"
+          onInput="onCmtInput"
+        />
+        <view class="cmt-imgs">
+          <block a:for="{{cmtForm.images}}" a:key="*this">
+            <view class="cmt-img-cell">
+              <image class="cmt-img" src="{{item}}" mode="aspectFill" data-i="{{index}}" onTap="onPreviewPickedImage" />
+              <view class="cmt-img-x" catchTap="onRemovePickedImage" data-i="{{index}}">×</view>
+            </view>
+          </block>
+          <view
+            a:if="{{cmtForm.images.length < 9}}"
+            class="cmt-img-add {{cmtUploading ? 'disabled' : ''}}"
+            onTap="onPickCmtImages"
+          >
+            <text a:if="{{cmtUploading}}" class="cmt-img-add-loading">上传中…</text>
+            <text a:else class="cmt-img-add-plus">＋</text>
+            <text a:if="{{!cmtUploading}}" class="cmt-img-add-tip">{{cmtForm.images.length}}/9</text>
+          </view>
+        </view>
+      </view>
+      <view class="cmt-f">
+        <view class="cmt-btn ghost" onTap="closeCommentModal">取消</view>
+        <view class="cmt-btn {{cmtSubmitting ? 'disabled' : ''}}" onTap="submitComment">
+          {{cmtSubmitting ? '提交中…' : '发表'}}
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 详情图片（后端配置：real_shots），紧贴拼接 -->
+  <!-- 根治 widthFix 小数像素缝：onLoad 后用 JS 按容器宽 × 原图比例 算出整数 px
+       高度写回 inline style，相邻 image 的边界都对齐到整数像素，渲染层不会再
+       吐出 1px 缝。未加载完时退化为 widthFix 兜底撑开，避免首屏空白。 -->
+  <view a:if="{{p.detail_images && p.detail_images.length}}" class="detail-imgs">
+    <block a:for="{{p.detail_images}}" a:key="*this">
+      <image
+        class="detail-img"
+        src="{{item.value}}"
+        mode="{{item.height > 0 ? 'aspectFill' : 'widthFix'}}"
+        style="{{item.height > 0 ? 'height:' + item.height + 'px' : ''}}"
+        data-i="{{index}}"
+        onLoad="onDetailImgLoad"
+      />
+    </block>
+  </view>
+
+  <!-- 定损标准（后台配置；含表头/分组/行 + 底部提示） -->
+  <view a:if="{{damageStandard.show}}" class="card ds-card">
+    <view class="ds-title">
+      <view class="ds-title-deco"></view>
+      <text class="ds-title-text">{{damageStandard.title}}</text>
+      <view class="ds-title-deco ds-title-deco--r"></view>
+    </view>
+    <view class="ds-table">
+      <view class="ds-thead">
+        <text class="ds-th ds-c-type">{{damageStandard.headers.type}}</text>
+        <text class="ds-th ds-c-degree">{{damageStandard.headers.degree}}</text>
+        <text class="ds-th ds-c-deprec">{{damageStandard.headers.depreciation}}</text>
+        <text class="ds-th ds-c-insur">{{damageStandard.headers.insurance}}</text>
+      </view>
+      <block a:for="{{damageStandard.groups}}" a:for-item="g" a:key="type">
+        <view class="ds-group">
+          <view class="ds-c-type ds-type-cell">{{g.type}}</view>
+          <view class="ds-rows">
+            <block a:for="{{g.rows}}" a:for-item="r" a:key="*this">
+              <view class="ds-row">
+                <text class="ds-c-degree">{{r.degree}}</text>
+                <text class="ds-c-deprec {{r.depreciation_highlight ? 'is-highlight' : ''}}">{{r.depreciation}}</text>
+                <text class="ds-c-insur {{r.insurance_highlight ? 'is-highlight' : ''}}">{{r.insurance}}</text>
+              </view>
+            </block>
+          </view>
+        </view>
+      </block>
+    </view>
+    <view a:if="{{damageStandard.notice}}" class="ds-notice">{{damageStandard.notice}}</view>
+  </view>
+
+  <!-- 商品介绍 -->
+  <view class="card intro-card">
+    <view class="intro-head">商品介绍</view>
+    <view class="intro-body">{{p.intro}}</view>
+  </view>
+
+  <view style="height:220rpx"></view>
+
+  <!-- 底部固定操作条 -->
+  <view class="bottom-bar safe-bottom">
+    <!-- 协议勾选行（未勾就下单时整行抖动提醒，替代打断式弹窗） -->
+    <view class="agree-row {{agreeShake ? 'shake' : ''}}">
+      <view class="agree-check {{agreed ? 'on' : ''}}" onTap="toggleAgree"></view>
+      <text class="agree-text" onTap="toggleAgree">我已阅读并同意</text>
+      <text class="agree-link" onTap="openAgreement">《租赁服务协议》</text>
+    </view>
+    <!-- 操作按钮行 -->
+    <view class="bb-actions">
+      <view class="bb-act" onTap="onShare">
+        <view class="bb-act-ico bb-act-share"></view>
+        <text class="bb-act-text">分享</text>
+      </view>
+      <view class="bb-act {{p.favorited ? 'is-on' : ''}}" onTap="onFav">
+        <view class="bb-act-ico bb-act-fav {{p.favorited ? 'on' : ''}}"></view>
+        <text class="bb-act-text">{{p.favorited ? '已收藏' : '收藏'}}</text>
+      </view>
+      <!-- 主行动按钮（合规：单行版 = LOGO + 完整版"芝麻信用｜免押金"）
+           按钮常态高亮可点；未勾协议时点击会抖动协议行引导，而非置灰 -->
+      <view a:if="{{p.status !== 'on'}}" class="bb-rent sold-out">已下架</view>
+      <view a:elif="{{p.stock > 0}}" class="bb-rent" onTap="onRent">
+        <image class="bb-rent-logo" src="/images/zmxy-logo.png" mode="aspectFit" />
+        <text class="bb-rent-brand">芝麻信用｜免押金</text>
+      </view>
+      <view a:else class="bb-rent sold-out">已租罄</view>
+    </view>
+  </view>
+
+  <!-- 分享抽屉（自定义，替代原生面板的尺寸/边框） -->
+  <view a:if="{{shareSheet}}" class="share-mask" onTap="closeShareSheet">
+    <view class="share-sheet" catchTap="noop">
+      <view class="share-sheet-h">分享到</view>
+      <view class="share-sheet-row">
+        <button class="share-tile share-tile-btn" open-type="share" onTap="onShareToFriend">
+          <view class="share-tile-ico ico-friend"><text class="ico-friend-text">支</text></view>
+          <text class="share-tile-label">支付宝好友</text>
+        </button>
+        <view class="share-tile" onTap="onCopyLink">
+          <view class="share-tile-ico ico-link"></view>
+          <text class="share-tile-label">复制链接</text>
+        </view>
+        <view class="share-tile" onTap="onSharePoster">
+          <view class="share-tile-ico ico-poster"></view>
+          <text class="share-tile-label">生成海报</text>
+        </view>
+      </view>
+      <view class="share-sheet-cancel" onTap="closeShareSheet">取消</view>
+    </view>
+  </view>
+
+  <!-- 海报：离屏画布（绘制源），始终渲染但移出可视区，截图后丢进预览弹层。
+       逻辑宽 375（见 .poster-canvas），按实际内容高度裁剪、设备像素比放大输出。 -->
+  <canvas class="poster-canvas" id="posterCanvas" type="2d"></canvas>
+
+  <!-- 海报预览弹层 -->
+  <view a:if="{{posterModal}}" class="poster-mask" onTap="closePoster">
+    <view class="poster-box" catchTap="noop">
+      <image a:if="{{posterImg}}" class="poster-img" src="{{posterImg}}" mode="widthFix" />
+      <view a:else class="poster-img poster-img-ph">海报生成中…</view>
+      <view class="poster-actions">
+        <view class="poster-btn poster-btn-ghost" onTap="closePoster">取消</view>
+        <view class="poster-btn poster-btn-main {{posterImg ? '' : 'is-disabled'}}" onTap="onSavePoster">保存到相册</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 优惠券选择抽屉（嵌在租期抽屉之上） -->
+  <view a:if="{{couponSheet}}" class="coupon-mask" onTap="closeCouponPicker">
+    <view class="coupon-sheet" catchTap="noop">
+      <view class="coupon-sheet-h">
+        <text class="coupon-sheet-title">选择优惠券</text>
+        <text class="coupon-sheet-close" onTap="closeCouponPicker">×</text>
+      </view>
+      <scroll-view class="coupon-sheet-list" scroll-y>
+        <view
+          class="coupon-pick-item {{pickedCoupon.id ? '' : 'on'}}"
+          onTap="onUnpickCoupon">
+          <view class="cpi-l">不使用优惠券</view>
+          <view class="cpi-radio {{pickedCoupon.id ? '' : 'on'}}"></view>
+        </view>
+        <block a:for="{{couponMatchList}}" a:key="id">
+          <view
+            class="coupon-pick-item {{pickedCoupon.id === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}"
+            onTap="onPickCoupon">
+            <view class="cpi-l">
+              <view class="cpi-name">- ¥{{item.discountText}} {{item.name}}</view>
+              <view class="cpi-meta">满 ¥{{item.thresholdText}} 可用</view>
+            </view>
+            <view class="cpi-radio {{pickedCoupon.id === item.id ? 'on' : ''}}"></view>
+          </view>
+        </block>
+      </scroll-view>
+    </view>
+  </view>
+
+  <!-- 租期选择抽屉（日历版） -->
+  <view a:if="{{rentSheet}}" class="rent-mask" onTap="closeRentSheet">
+    <view class="rent-sheet" catchTap="noop">
+      <!-- 顶部 -->
+      <view class="cal-head">
+        <text class="cal-title">选择租期</text>
+        <text class="cal-close" onTap="closeRentSheet">×</text>
+        <view class="cal-sub">
+          <text class="cal-sub-line">* 起租日起前 {{rent.shipDays}} 天为物流期，免收租金；最少租期 {{MIN_RENT_DAYS}} 天</text>
+          <text a:if="{{!allowManualPick}}" class="cal-sub-line cal-sub-locked">* 请使用上方快捷天数选择租期</text>
+        </view>
+      </view>
+
+      <!-- 快捷天数预设 -->
+      <scroll-view class="cal-presets" scroll-x>
+        <view class="cal-presets-row">
+          <block a:for="{{rentPresets}}" a:key="*this">
+            <view
+              class="cal-preset {{activePreset === item ? 'on' : ''}}"
+              data-d="{{item}}"
+              onTap="onPresetTap"
+            >{{item}}天</view>
+          </block>
+        </view>
+      </scroll-view>
+
+      <!-- 星期标签 -->
+      <view class="cal-week">
+        <block a:for="{{weekLabels}}" a:for-item="w" a:key="*this">
+          <text class="cal-week-cell">{{w}}</text>
+        </block>
+      </view>
+
+      <!-- 滚动日历区（allowManualPick=false 时整块置灰、点选无效，仅展示预设选中的区间） -->
+      <scroll-view class="cal-scroll {{allowManualPick ? '' : 'cal-scroll--locked'}}" scroll-y>
+        <block a:for="{{calMonths}}" a:for-item="mo" a:key="label">
+          <view class="cal-month-label">{{mo.label}}</view>
+          <view class="cal-grid">
+            <block a:for="{{mo.weeks}}" a:for-item="wk" a:key="*this">
+              <block a:for="{{wk}}" a:for-item="cell" a:key="*this">
+                <view a:if="{{cell.empty}}" class="cal-cell cal-cell--empty"></view>
+                <view
+                  a:else
+                  class="cal-cell cal-cell--{{cell.status}} {{cell.isShip ? 'is-ship' : ''}} {{cell.endDisabled ? 'end-disabled' : ''}} {{cell.isEarliestEnd ? 'is-earliest' : ''}}"
+                  data-ymd="{{cell.ymd}}"
+                  onTap="onCalDayTap"
+                >
+                  <text a:if="{{cell.status === 'start' || cell.status === 'start-only'}}" class="cal-tag">起租</text>
+                  <text a:elif="{{cell.status === 'end'}}" class="cal-tag">归还</text>
+                  <text a:elif="{{cell.isEarliestEnd}}" class="cal-tag cal-tag--earliest">最早可还</text>
+                  <text class="cal-day">{{cell.day}}</text>
+                  <text a:if="{{cell.priceText}}" class="cal-price {{cell.priceText === '物流' ? 'is-ship' : ''}}">{{cell.priceText}}</text>
+                </view>
+              </block>
+            </block>
+          </view>
+        </block>
+      </scroll-view>
+
+      <!-- 底部汇总 + 确认 -->
+      <view class="cal-foot">
+        <!-- 浮动提示卡：选错日期 / 缺日期时显示，3.5s 自动收起 -->
+        <view a:if="{{inlineTip.show}}" class="cal-inline-tip cal-inline-tip--{{inlineTip.kind}}">
+          <view class="cal-inline-tip-ico">!</view>
+          <view class="cal-inline-tip-body">
+            <text class="cal-inline-tip-title">{{inlineTip.title}}</text>
+            <text class="cal-inline-tip-text">{{inlineTip.body}}</text>
+          </view>
+        </view>
+
+        <view a:if="{{rent.startDate && rent.endDate}}" class="cal-foot-info">
+          <view class="cal-range">
+            <text class="cal-range-l">起租 {{rent.startDateShort}}</text>
+            <text class="cal-range-arr">→</text>
+            <text class="cal-range-l">归还 {{rent.endDateShort}}</text>
+          </view>
+          <view class="cal-meta">
+            <text class="cal-meta-pill cal-meta-ship">物流期 {{rent.shipDays}} 天 免租</text>
+            <text class="cal-meta-pill cal-meta-rent">用机 {{rent.rentDays}} 天</text>
+            <text a:if="{{rent.saved > 0}}" class="cal-meta-pill cal-meta-saved">长租省 ¥{{rent.saved}}</text>
+          </view>
+        </view>
+        <view a:else class="cal-foot-tip">请先选择起租日和归还日</view>
+
+        <!-- 优惠券选择行：仅在已选完日期 + 我的可用券非空时展示 -->
+        <view a:if="{{rent.startDate && rent.endDate && rent.rentDays > 0}}"
+              class="cal-coupon-row" onTap="openCouponPicker">
+          <text class="cal-coupon-label">优惠券</text>
+          <view class="cal-coupon-value">
+            <text a:if="{{pickedCoupon.id}}" class="cal-coupon-on">- ¥{{pickedCoupon.discountText}}（{{pickedCoupon.name}}）</text>
+            <text a:elif="{{couponMatchList.length > 0}}" class="cal-coupon-tip">{{couponMatchList.length}} 张可用</text>
+            <text a:else class="cal-coupon-tip mute">无可用</text>
+            <text class="cal-coupon-arr">›</text>
+          </view>
+        </view>
+
+        <view class="cal-foot-action">
+          <view class="cal-total-wrap">
+            <text class="cal-total-label">合计</text>
+            <text class="cal-total-num">¥{{rent.finalText || rent.total}}</text>
+            <text a:if="{{pickedCoupon.id}}" class="cal-total-orig">原价 ¥{{rent.total}}</text>
+            <text class="cal-total-sub">押金 ¥{{rent.deposit}} 预冻结</text>
+          </view>
+          <!-- 主按钮（合规：多行版本 = 场景表达「免押租借」+ LOGO + 完整版「芝麻信用｜免押金」） -->
+          <view class="cal-confirm {{rent.startDate && rent.endDate && rent.rentDays > 0 ? '' : 'disabled'}}" onTap="confirmRentSheet">
+            <text class="cal-confirm-main">免押租借</text>
+            <view class="cal-confirm-sub">
+              <image class="cal-confirm-logo" src="/images/zmxy-logo.png" mode="aspectFit" />
+              <text class="cal-confirm-brand">芝麻信用｜免押金</text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

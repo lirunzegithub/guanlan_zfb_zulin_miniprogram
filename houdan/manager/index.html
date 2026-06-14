@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>观澜数码租赁 · 管理后台</title>
+  <link rel="stylesheet" href="/manager-assets/app.css" />
+  <style>
+    #app-fallback {
+      padding: 80px 40px; max-width: 720px; margin: 0 auto;
+      color: #6b7280; font-size: 14px; line-height: 1.6;
+    }
+    #app-fallback h2 { color: #1a1f2e; margin: 0 0 12px; }
+    #app-error {
+      display: none;
+      background: #fff1f1; color: #c0260b;
+      padding: 16px 20px; border-left: 4px solid #ff3b30;
+      border-radius: 4px; margin-top: 16px;
+      white-space: pre-wrap; word-break: break-all;
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="app-fallback">
+      <h2>正在加载管理后台…</h2>
+      <p>若超过几秒未跳转，请打开浏览器控制台查看错误。</p>
+      <div id="app-error"></div>
+    </div>
+  </div>
+
+  <script>
+    window.__showErr = function (msg) {
+      var el = document.getElementById('app-error');
+      if (!el) return;
+      el.style.display = 'block';
+      el.textContent = (el.textContent || '') + msg + '\n';
+    };
+    window.addEventListener('error', function (e) {
+      window.__showErr('[JS ERROR] ' + (e.message || e) + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      window.__showErr('[PROMISE] ' + (e.reason && (e.reason.message || e.reason) || e.reason));
+    });
+  </script>
+
+  <!-- 依赖打到本地，避免国内访问 CDN 失败 -->
+  <script src="/manager-assets/lib/vue.global.prod.js"></script>
+  <script src="/manager-assets/lib/vue-router.global.prod.js"></script>
+  <script src="/manager-assets/lib/vue3-sfc-loader.js"></script>
+  <script src="/manager-assets/lib/axios.min.js"></script>
+
+  <script>
+    // CDN 加载完毕后再启 SPA；任何缺失都直接报错
+    (function () {
+      var miss = [];
+      if (typeof Vue === 'undefined') miss.push('Vue');
+      if (typeof VueRouter === 'undefined') miss.push('VueRouter');
+      if (typeof window['vue3-sfc-loader'] === 'undefined') miss.push('vue3-sfc-loader');
+      if (typeof axios === 'undefined') miss.push('axios');
+      if (miss.length) {
+        window.__showErr('CDN 资源加载失败: ' + miss.join(', '));
+        return;
+      }
+      var s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/manager-assets/app.js';
+      document.body.appendChild(s);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,199 @@
+.page {
+  min-height: 100vh;
+  background: #f4f7fb;
+  padding-bottom: 32rpx;
+}
+
+/* ===== Tab ===== */
+.tabs {
+  display: flex;
+  background: #ffffff;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #eef1f6;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  font-size: 28rpx;
+  color: #6b7280;
+  padding: 18rpx 0;
+  position: relative;
+}
+.tab.on {
+  color: #2b7cff;
+  font-weight: 600;
+}
+.tab.on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 6rpx;
+  width: 56rpx;
+  margin-left: -28rpx;
+  height: 4rpx;
+  background: #2b7cff;
+  border-radius: 4rpx;
+}
+
+/* ===== Section ===== */
+.section {
+  margin: 24rpx 24rpx 0;
+}
+.sec-title {
+  font-size: 26rpx;
+  color: #6b7280;
+  margin: 16rpx 4rpx 12rpx;
+  letter-spacing: 1rpx;
+}
+
+/* ===== 优惠券卡 ===== */
+.coupon-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  background: linear-gradient(135deg, #ffffff 0%, #fff7e8 100%);
+  border-radius: 16rpx;
+  padding: 28rpx 24rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 4rpx 16rpx rgba(255, 178, 87, 0.12);
+  overflow: hidden;
+}
+.coupon-card.is-mute {
+  background: #f7f8fa;
+  box-shadow: none;
+  filter: grayscale(60%);
+  opacity: 0.85;
+}
+
+.cp-left {
+  flex: 0 0 220rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #f0560b;
+}
+.cp-discount {
+  display: flex;
+  align-items: baseline;
+  color: #f0560b;
+}
+.cp-cny { font-size: 28rpx; margin-right: 4rpx; font-weight: 600; }
+.cp-num { font-size: 72rpx; font-weight: 700; line-height: 1; }
+.cp-thresh {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #b8581a;
+}
+
+/* 虚线分隔 + 两侧凹槽，做票根感 */
+.cp-divider {
+  flex: 0 0 1rpx;
+  margin: 12rpx 16rpx;
+  background-image: linear-gradient(to bottom, #f0560b 0, #f0560b 4rpx, transparent 4rpx, transparent 12rpx);
+  background-size: 1rpx 12rpx;
+  background-repeat: repeat-y;
+  opacity: 0.4;
+  position: relative;
+}
+.coupon-card::before,
+.coupon-card::after {
+  content: '';
+  position: absolute;
+  width: 24rpx;
+  height: 24rpx;
+  background: #f4f7fb;
+  border-radius: 50%;
+  left: 220rpx;
+  margin-left: 16rpx;
+}
+.coupon-card::before { top: -12rpx; }
+.coupon-card::after { bottom: -12rpx; }
+
+.cp-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+.cp-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1a1f2e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-meta {
+  font-size: 22rpx;
+  color: #9aa4b2;
+  margin-top: 6rpx;
+}
+.cp-tag {
+  display: inline-block;
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  color: #f0560b;
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+  background: rgba(240, 86, 11, 0.08);
+  align-self: flex-start;
+}
+.cp-tag.muted {
+  color: #9aa4b2;
+  background: #eef1f6;
+}
+
+.cp-claim {
+  align-self: center;
+  margin-left: 16rpx;
+  flex: 0 0 auto;
+  padding: 14rpx 20rpx;
+  background: linear-gradient(135deg, #ff7e3a, #f0560b);
+  color: #ffffff;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+.cp-claim.disabled {
+  background: #cdd1d8;
+  color: #ffffff;
+}
+
+/* 已使用 / 已过期：右上角戳记 */
+.cp-stamp {
+  position: absolute;
+  top: 24rpx;
+  right: 24rpx;
+  font-size: 22rpx;
+  color: #9aa4b2;
+  border: 2rpx solid #cdd1d8;
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+  transform: rotate(-8deg);
+  background: #ffffff;
+}
+
+/* ===== 空状态 ===== */
+.empty {
+  background: #ffffff;
+  border-radius: 16rpx;
+  padding: 60rpx 0 48rpx;
+  text-align: center;
+  color: #9aa4b2;
+}
+.empty-ico { font-size: 64rpx; margin-bottom: 8rpx; }
+.empty-tip { font-size: 26rpx; }
+.empty-btn {
+  display: inline-block;
+  margin-top: 24rpx;
+  padding: 16rpx 36rpx;
+  background: #2b7cff;
+  color: #ffffff;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+}

@@ -1,0 +1,169 @@
+.page {
+  min-height: 100vh;
+  background: #f4f7fb;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* 顶部提示条 */
+.notice {
+  margin: 24rpx 24rpx 0;
+  padding: 24rpx 28rpx;
+  background: linear-gradient(135deg, #fff7e0 0%, #ffefc6 100%);
+  border: 1rpx solid #f5d98a;
+  border-radius: 16rpx;
+  box-shadow: 0 6rpx 18rpx rgba(240, 167, 0, 0.08);
+}
+.notice-row {
+  display: flex; align-items: center; gap: 12rpx;
+}
+.notice-ic {
+  width: 32rpx; height: 32rpx; border-radius: 50%;
+  background: #f0a300;
+  position: relative;
+  flex-shrink: 0;
+}
+.notice-ic::after {
+  content: '!';
+  position: absolute;
+  inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 24rpx;
+}
+.notice-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #8a5a00;
+}
+.notice-sub {
+  margin-top: 8rpx;
+  margin-left: 44rpx;
+  font-size: 24rpx;
+  color: #8a5a00;
+  line-height: 1.6;
+}
+.notice-sub .link {
+  color: #2b7cff;
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+/* 通用卡 */
+.card {
+  margin: 24rpx 24rpx 0;
+  padding: 28rpx 28rpx 24rpx;
+  background: #fff;
+  border-radius: 16rpx;
+  box-shadow: 0 4rpx 14rpx rgba(20, 30, 60, 0.04);
+}
+.card-title {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1a1f2e;
+  margin-bottom: 20rpx;
+}
+.card-title .required {
+  color: #f0560b;
+  margin-left: 4rpx;
+}
+
+.loading-text {
+  color: #9aa0ac;
+  font-size: 26rpx;
+}
+
+/* 扣款详情卡 */
+.detail-card .amount-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 16rpx 0 20rpx;
+  border-bottom: 1rpx solid #f0f3f8;
+  margin-bottom: 16rpx;
+}
+.amount-label {
+  font-size: 26rpx;
+  color: #5b6376;
+}
+.amount-value {
+  font-size: 48rpx;
+  font-weight: 700;
+  color: #f0560b;
+}
+.info-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 10rpx 0;
+  font-size: 26rpx;
+}
+.info-k { color: #5b6376; flex-shrink: 0; margin-right: 24rpx; }
+.info-v { color: #1a1f2e; text-align: right; word-break: break-all; }
+.info-v.mono { font-family: 'SF Mono', Consolas, monospace; font-size: 24rpx; }
+
+/* 退款理由卡 */
+.reason-input {
+  width: 100%;
+  min-height: 180rpx;
+  padding: 16rpx 20rpx;
+  background: #f4f7fb;
+  border: 1rpx solid #e7ecf2;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  color: #1a1f2e;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+.reason-foot {
+  display: flex; justify-content: flex-end;
+  margin-top: 8rpx;
+}
+.reason-count {
+  font-size: 22rpx;
+  color: #9aa0ac;
+}
+
+/* 上次驳回理由提示 */
+.reject-card {
+  border-left: 6rpx solid #c0392b;
+}
+.reject-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #c0392b;
+  margin-bottom: 8rpx;
+}
+.reject-body {
+  font-size: 26rpx;
+  color: #1a1f2e;
+  line-height: 1.6;
+}
+
+/* 底部固定按钮区 */
+.bottom-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: #fff;
+  box-shadow: 0 -2rpx 16rpx rgba(20, 30, 60, 0.05);
+  padding: 16rpx 24rpx 24rpx;
+  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+}
+.bb-tip {
+  font-size: 22rpx;
+  color: #9aa0ac;
+  text-align: center;
+  margin-bottom: 12rpx;
+}
+.bb-primary {
+  height: 88rpx;
+  border-radius: 44rpx;
+  background: linear-gradient(135deg, #f0560b 0%, #f08a0b 100%);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6rpx 18rpx rgba(240, 86, 11, 0.25);
+}
+.bb-primary:active { opacity: 0.85; }
+.bb-primary.disabled {
+  background: #cfd5e0;
+  box-shadow: none;
+  color: #fff;
+}

@@ -1,0 +1,17 @@
+<view class="page">
+  <view class="logo">
+    <view class="logo-dot"></view>
+  </view>
+  <view class="brand">观澜数码租赁</view>
+  <view class="hint">
+    需要授权登录后才能查看订单、收藏、地址等个人信息{{redirect ? '\n登录成功后会回到原页面' : ''}}
+  </view>
+
+  <view class="btn-login {{loading ? 'disabled' : ''}}" onTap="onLogin">
+    <text>{{loading ? '登录中…' : '一键授权登录'}}</text>
+  </view>
+
+  <view class="skip" onTap="onSkip">先随便看看</view>
+
+  <view class="footer">登录代表你已阅读并同意《租赁服务协议》</view>
+</view>

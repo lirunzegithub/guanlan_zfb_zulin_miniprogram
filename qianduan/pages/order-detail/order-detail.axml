@@ -1,0 +1,343 @@
+<view class="page" a:if="{{o.id}}">
+
+  <view class="bg-top"></view>
+
+  <!-- 收货地址 -->
+  <view a:if="{{o.address_snapshot}}" class="card addr-card">
+    <view class="addr-ico"></view>
+    <view class="addr-info">
+      <view class="addr-line1">
+        <text class="addr-name">{{o.address_snapshot.receiver_name}}</text>
+        <text class="addr-phone">{{o.address_snapshot.receiver_phone}}</text>
+      </view>
+      <view class="addr-full">{{o.address_snapshot.full}}</view>
+    </view>
+  </view>
+
+  <!-- 发货倒计时（仅 status=send 显示） -->
+  <view a:if="{{o.status === 'send'}}" class="card ship-card">
+    <view a:if="{{!o._shipOverdue}}">
+      <view class="ship-title">商家承诺 48 小时内发货</view>
+      <view class="ship-sub">发货超时将赠送 3 天额外免租期</view>
+      <view class="ship-countdown">
+        <view class="cd-label">剩余</view>
+        <view class="cd-blocks">
+          <view class="cd-num">{{o._shipHH}}</view>
+          <text class="cd-colon">:</text>
+          <view class="cd-num">{{o._shipMM}}</view>
+          <text class="cd-colon">:</text>
+          <view class="cd-num">{{o._shipSS}}</view>
+        </view>
+        <view class="cd-unit">时 / 分 / 秒</view>
+      </view>
+    </view>
+    <view a:else class="ship-overdue">
+      <view class="ship-overdue-title">发货超时</view>
+      <view class="ship-overdue-sub">请联系客服进行催促，我们将为你赠送 3 天额外免租期</view>
+      <view class="ship-overdue-btn" onTap="onCallService">
+        <view class="ic-phone"></view>
+        <text>联系客服电话</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 状态卡 -->
+  <view class="card status-card">
+    <view class="status-row">
+      <view class="status-ico"><view class="ic-doc"></view></view>
+      <text class="status-text">{{o._statusText}}</text>
+    </view>
+    <view class="status-meta">
+      <view class="meta-info">
+        <view class="meta-product">{{o.product_name}}</view>
+        <view class="meta-k">数量：1 件</view>
+      </view>
+      <view class="status-thumb">
+        <image a:if="{{o.product_cover}}" class="thumb-img" src="{{o.product_cover}}" mode="aspectFill" />
+        <view a:else class="thumb-bot">{{o._shortName}}</view>
+      </view>
+    </view>
+    <view class="status-price">¥{{o._dailyText}} 元/天</view>
+  </view>
+
+  <!-- 实时租金累计 -->
+  <view a:if="{{rent.show}}" class="card rent-card">
+    <view class="rent-head">
+      <text class="rent-title">租金实时累计</text>
+      <text a:if="{{rent.notStarted}}" class="rent-state pending">未开始计费</text>
+      <text a:elif="{{rent.inShipPeriod}}" class="rent-state ship">物流免租期</text>
+      <text a:elif="{{rent.overhold}}" class="rent-state warn">已超归还日</text>
+      <text a:else class="rent-state on">计费中</text>
+    </view>
+    <view class="rent-amount-line">
+      <text class="rent-currency">¥</text>
+      <text class="rent-num">{{rent.accumulated}}</text>
+    </view>
+    <view class="rent-sub">
+      <block a:if="{{rent.inShipPeriod}}">物流期 {{rent.shipUsed}} / {{rent.shipDays}} 天 · 暂未计费</block>
+      <block a:elif="{{rent.notStarted}}">起租前 · 暂未计费</block>
+      <block a:else>已计费 {{rent.currentDays}} 天（不含 {{rent.shipDays}} 天物流免租期）</block>
+    </view>
+
+    <view class="rent-info">
+      <view class="info-row">
+        <text class="info-k">物流免租期</text>
+        <text class="info-v">{{rent.physicalStartText}} 起 · 免租 {{rent.shipDays}} 天</text>
+      </view>
+      <view class="info-row">
+        <text class="info-k">起租日（开始计费）</text>
+        <text class="info-v hl-primary">{{rent.billingStartText}}</text>
+      </view>
+      <view a:if="{{rent.endDateText}}" class="info-row">
+        <text class="info-k">预计归还日</text>
+        <text class="info-v">{{rent.endDateText}}</text>
+      </view>
+      <view class="info-row breach-row">
+        <text class="info-k">强制违约日</text>
+        <text class="info-v breach-v">{{rent.breachDateText}}</text>
+      </view>
+    </view>
+
+    <view class="tier-block">
+      <view class="tier-head">
+        计费标准
+        <text class="tier-head-sub">下单时锁定，后续改价不影响本单</text>
+      </view>
+      <view class="tier-line tier-ship">
+        <text class="tier-range">物流期 前 {{rent.shipDays}} 天</text>
+        <text class="tier-price tier-price-free">免租</text>
+      </view>
+      <block a:for="{{rent.tierLines}}" a:key="*this">
+        <view class="tier-line">
+          <text class="tier-range">{{item.range}}</text>
+          <text class="tier-price">¥{{item.price}} / 天</text>
+        </view>
+      </block>
+    </view>
+
+    <view a:if="{{rent.overhold}}" class="rent-warn-banner">
+      ⚠️ 已超过预计归还日；当前仍按计费标准累计，强制违约日 {{rent.breachDateText}} 后将触发自动扣款
+    </view>
+  </view>
+
+  <!-- 物流信息（已发货后显示） -->
+  <view a:if="{{o.logistics_no}}" class="card logi-card">
+    <view class="card-h">
+      <text class="card-title">物流信息</text>
+      <text a:if="{{o._shippedAtText}}" class="muted-sm">{{o._shippedAtText}} 已发货</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">快递公司</text>
+      <text class="info-v">{{o._logiCompanyName}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">运单号</text>
+      <text class="info-v mono" onTap="onCopyLogisticsNo">{{o.logistics_no}}<text class="copy-hint"> 复制</text></text>
+    </view>
+  </view>
+
+  <!-- 寄回归还表单（using/return/overdue 显示）-->
+  <view a:if="{{o.status === 'using' || o.status === 'return' || o.status === 'overdue'}}" class="card return-ship-form">
+    <view class="card-h">
+      <text class="card-title">寄回归还</text>
+    </view>
+    <view class="rs-sub">填写寄回快递信息，商家收到并核验通过后自动解冻押金</view>
+    <view a:if="{{o.return_reject_reason}}" class="rs-reject">
+      <text class="rs-reject-tag">上次驳回</text>
+      <text class="rs-reject-text">{{o.return_reject_reason}}</text>
+    </view>
+
+    <view class="rs-field">
+      <view class="rs-field-label">快递公司</view>
+      <view class="rs-segments">
+        <view a:for="{{couriers}}" a:for-item="c" a:key="code"
+              class="rs-seg {{rsCompany === c.code ? 'active' : ''}}"
+              data-code="{{c.code}}" onTap="onRsCompany">
+          <view class="rs-seg-dot"></view>
+          <text class="rs-seg-name">{{c.name}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="rs-field">
+      <view class="rs-field-label">
+        运单号
+        <text a:if="{{rsNo}}" class="rs-field-hint">{{rsNo.length}} 位</text>
+      </view>
+      <view class="rs-input-wrap {{rsNo ? 'has-value' : ''}}">
+        <view class="rs-input-ico"></view>
+        <input class="rs-input" value="{{rsNo}}" placeholder="粘贴或输入运单号"
+               onInput="onRsNoInput" />
+        <view a:if="{{rsNo}}" class="rs-input-clear" catchTap="onClearRsNo">×</view>
+        <view a:else class="rs-input-paste" catchTap="onPasteRsNo">粘贴</view>
+      </view>
+    </view>
+
+    <view class="rs-submit {{(!rsCompany || !rsNo || rsSubmitting) ? 'disabled' : ''}}"
+          onTap="onSubmitReturn">{{rsSubmitting ? '提交中…' : '提交寄回信息'}}</view>
+  </view>
+
+  <!-- 已寄回，等待商家签收核验（status === return_inspecting）-->
+  <view a:if="{{o.status === 'return_inspecting'}}" class="card return-pending-card">
+    <view class="rp-badge">
+      <view class="rp-badge-dot"></view>
+      <text class="rp-badge-text">待商家签收</text>
+    </view>
+    <view class="rp-title">等待商家收货核验</view>
+    <view class="rp-sub">已收到你的寄回信息，商家签收并核验通过后将自动解冻押金</view>
+    <view class="info-row">
+      <text class="info-k">快递公司</text>
+      <text class="info-v">{{o.return_logistics_company_name || o.return_logistics_company}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">运单号</text>
+      <text class="info-v mono">{{o.return_logistics_no}}</text>
+    </view>
+  </view>
+
+  <!-- 已归还后的"我要评价"入口（评价归属商品，跳到商品详情后自动弹评价层） -->
+  <view a:if="{{o.status === 'done'}}" class="card review-cta-card" onTap="onGoReview">
+    <view class="rcta-left">
+      <view class="rcta-ico">★</view>
+      <view class="rcta-text">
+        <view class="rcta-title">订单已完成，写下你的评价</view>
+        <view class="rcta-sub">分享真实体验，帮助其他用户做决定</view>
+      </view>
+    </view>
+    <text class="rcta-arrow">›</text>
+  </view>
+
+  <!-- 押金信息 -->
+  <view class="card">
+    <view class="card-h">
+      <text class="card-title">押金信息</text>
+      <image class="zmxy-badge" src="/images/zmxy-badge.png" mode="aspectFit" />
+    </view>
+    <view class="info-row">
+      <text class="info-k">实付押金</text>
+      <text class="info-v deposit-amt">¥0.00</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">冻结金额</text>
+      <text class="info-v">¥{{o._freezeText}}</text>
+    </view>
+    <!-- 当冻结模式 = 押金+租金时，展开显示分项，避免用户误以为"押金多收了" -->
+    <view a:if="{{o._freezeIncludesRent}}" class="info-row sub-row">
+      <text class="info-k sub-k">┗ 押金 ¥{{o.deposit_freeze}} + 租金 ¥{{o._amountText}}</text>
+    </view>
+    <view class="deposit-tip">
+      <block a:if="{{o._freezeIncludesRent}}">芝麻信用免押金，无需实付，押金 + 总租金以信用额度形式冻结作为担保；归还核验通过后自动解冻剩余、按实际用量扣租金。</block>
+      <block a:else>芝麻信用免押金，无需实付，仅冻结押金作为信用担保，归还后自动解冻；租金按周期单独扣款。</block>
+    </view>
+  </view>
+
+  <!-- 历史扣款记录（押金里被扣过的真实流水） -->
+  <view a:if="{{charges.length}}" class="card charges-card">
+    <view class="card-h">
+      <text class="card-title">扣款记录</text>
+      <text class="charge-total">合计 ¥{{chargeTotalText}}</text>
+    </view>
+    <view a:for="{{charges}}" a:for-item="t" a:key="id" class="charge-item">
+      <view class="charge-row1">
+        <text class="charge-tag">{{t.reason_label}}</text>
+        <text class="charge-amount">¥{{t.amount_text}}</text>
+      </view>
+      <view a:if="{{t.reason_detail}}" class="charge-detail">{{t.reason_detail}}</view>
+      <view class="charge-time">{{t.paid_at_text}}</view>
+
+      <!-- 退款入口 / 退款状态行 -->
+      <!-- ① 未申请且仍有可退金额 → 黄字"对此扣款有疑问？"按钮 -->
+      <view
+        a:if="{{(t.refund_apply.status === '' || t.refund_apply.status === 'REJECTED') && t.refundable_amount > 0}}"
+        class="charge-refund-entry"
+        data-id="{{t.id}}"
+        onTap="onOpenRefundApply">
+        <text class="charge-refund-link">对此扣款有疑问？申请退款 ›</text>
+      </view>
+      <!-- ② 审核中 -->
+      <view a:if="{{t.refund_apply.status === 'PENDING'}}" class="charge-refund-state pending">
+        <text class="rs-dot"></text>
+        <text class="rs-text">退款审核中 · 2 个工作日内处理</text>
+      </view>
+      <!-- ③ 已驳回（驳回理由 + 仍可重新申请的按钮已经在 ① 显示了，这里只展示历史） -->
+      <view a:if="{{t.refund_apply.status === 'REJECTED'}}" class="charge-refund-state rejected">
+        <text class="rs-text">上次退款申请已被驳回</text>
+        <text a:if="{{t.refund_apply.rejected_reason}}" class="rs-sub">理由：{{t.refund_apply.rejected_reason}}</text>
+      </view>
+      <!-- ④ 已退款（成功） -->
+      <view a:if="{{t.refunded_amount > 0}}" class="charge-refund-state done">
+        <text class="rs-text">已退款 ¥{{t.refunded_amount}}</text>
+        <text a:if="{{t.refundable_amount <= 0}}" class="rs-sub">全额退款，原路退回支付宝</text>
+      </view>
+    </view>
+    <view class="charge-tip">每笔扣款会同步在你的支付宝账单中显示。如有疑问可申请退款，2 个工作日内审核。</view>
+  </view>
+
+  <!-- 合计支付 -->
+  <view class="card">
+    <view class="card-h">
+      <text class="card-title">合计支付</text>
+      <text class="big-price">¥{{o._amountText}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">总租金</text>
+      <text class="info-v">¥{{o._originalText || o._amountText}}</text>
+    </view>
+    <view a:if="{{o.user_coupon_id}}" class="info-row">
+      <text class="info-k">优惠券</text>
+      <text class="info-v" style="color:#f0560b">- ¥{{o._discountText}}（{{o.coupon_name}}）</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">租赁天数</text>
+      <text class="info-v">{{o.days}}天</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">每日租金</text>
+      <text class="info-v">¥{{o._dailyText}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">收货方式</text>
+      <text class="info-v">邮寄</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">订单编号</text>
+      <text class="info-v mono" onTap="onCopyOrderId">{{o.id}}<text class="copy-hint"> 复制</text></text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">下单时间</text>
+      <text class="info-v">{{o._createdText}}</text>
+    </view>
+  </view>
+
+  <!-- 取消审核中提示（status === pending_cancel）
+       两段语义：
+         a) 商家还没审核              → 标题"取消申请审核中"
+         b) 商家已同意、解冻请求已下发  → 标题"商家已同意，解冻中"
+       通过 unfreeze_dispatched_at 区分 -->
+  <view a:if="{{o.status === 'pending_cancel'}}" class="card cancel-pending-card">
+    <block a:if="{{o.unfreeze_dispatched_at}}">
+      <view class="cp-title">✅ 商家已同意，解冻中</view>
+      <view class="cp-sub">解冻请求已下发，等待支付宝确认；通常几秒到几十秒内完成，订单将自动变为已取消。</view>
+    </block>
+    <block a:else>
+      <view class="cp-title">⏳ 取消申请审核中</view>
+      <view class="cp-sub">商家正在核实你的取消申请；通过后将自动解冻信用额度。</view>
+    </block>
+    <view a:if="{{o.cancel_reason}}" class="cp-reason">理由：{{o.cancel_reason}}</view>
+  </view>
+
+  <!-- 若商家驳回过取消申请，把驳回理由附上来给用户看 -->
+  <view a:if="{{o.status === 'send' && o.cancel_reject_reason}}" class="card cancel-reject-card">
+    <view class="crj-title">取消申请已被商家驳回</view>
+    <view class="crj-sub">理由：{{o.cancel_reject_reason}}</view>
+  </view>
+
+  <!-- 给底部固定 Bar 留位（send 状态有底部"申请取消"按钮） -->
+  <view style="height: {{o.status === 'send' ? 180 : 40}}rpx;"></view>
+
+  <!-- 底部固定 Bar：仅 send 状态显示"申请取消"按钮 -->
+  <view a:if="{{o.status === 'send'}}" class="bottom-bar safe-bottom">
+    <view class="bb-ghost" onTap="onRequestCancel">申请取消</view>
+    <view class="bb-primary disabled">等待商家发货</view>
+  </view>
+</view>

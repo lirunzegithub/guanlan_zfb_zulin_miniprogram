@@ -1,0 +1,89 @@
+<view class="page">
+
+  <!-- 顶部提示条：审核时效 + 加急客服电话 -->
+  <view class="notice">
+    <view class="notice-row">
+      <view class="notice-ic"></view>
+      <text class="notice-title">退款申请将在 2 个工作日内审核</text>
+    </view>
+    <view class="notice-sub">
+      审核通过后将原路退回至支付宝账户。
+      <text class="link" onTap="onCallService">如需加急，请拨打客服电话</text>
+    </view>
+  </view>
+
+  <!-- 扣款详情卡 -->
+  <view a:if="{{!loaded}}" class="card loading-card">
+    <text class="loading-text">加载中…</text>
+  </view>
+
+  <view a:else class="card detail-card">
+    <view class="card-title">扣款详情</view>
+    <view class="amount-row">
+      <text class="amount-label">本次申请退款</text>
+      <text class="amount-value">¥{{t._refundable_text}}</text>
+    </view>
+    <view a:if="{{t.refunded_amount > 0}}" class="info-row">
+      <text class="info-k">已退款</text>
+      <text class="info-v">¥{{t.refunded_amount}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">扣款金额</text>
+      <text class="info-v">¥{{t.amount_text}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">扣款类型</text>
+      <text class="info-v">{{t.reason_label}}</text>
+    </view>
+    <view a:if="{{t.reason_detail}}" class="info-row">
+      <text class="info-k">扣款说明</text>
+      <text class="info-v">{{t.reason_detail}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">扣款时间</text>
+      <text class="info-v">{{t.paid_at_text}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">扣款单号</text>
+      <text class="info-v mono">{{t.id}}</text>
+    </view>
+    <view class="info-row">
+      <text class="info-k">所属订单</text>
+      <text class="info-v mono">{{oid}}</text>
+    </view>
+  </view>
+
+  <!-- 退款理由 -->
+  <view a:if="{{loaded}}" class="card reason-card">
+    <view class="card-title">
+      退款理由
+      <text class="required">*</text>
+    </view>
+    <textarea
+      class="reason-input"
+      value="{{reason}}"
+      placeholder="请说明本次退款的具体理由，例如：实际未发生该项费用 / 重复扣款 / 收费金额与约定不符 …（至少 5 个字）"
+      maxlength="500"
+      onInput="onReasonInput" />
+    <view class="reason-foot">
+      <text class="reason-count">{{reason.length}}/500</text>
+    </view>
+  </view>
+
+  <!-- 上次驳回理由（如果有，给用户参考） -->
+  <view a:if="{{loaded && t.refund_apply.status === 'REJECTED' && t.refund_apply.rejected_reason}}"
+        class="card reject-card">
+    <view class="reject-title">上次申请被驳回的理由</view>
+    <view class="reject-body">{{t.refund_apply.rejected_reason}}</view>
+  </view>
+
+  <!-- 底部占位：避免被 bottom-bar 盖住 -->
+  <view style="height: 200rpx;"></view>
+
+  <!-- 底部固定按钮 -->
+  <view a:if="{{loaded}}" class="bottom-bar safe-bottom">
+    <view class="bb-tip">退款成功后将原路退回至支付宝账户</view>
+    <view class="bb-primary {{(reason.length < 5 || submitting) ? 'disabled' : ''}}"
+          onTap="onSubmit">{{submitting ? '提交中…' : '发起退款'}}</view>
+  </view>
+</view>

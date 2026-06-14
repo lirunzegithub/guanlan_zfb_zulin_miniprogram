@@ -1,0 +1,58 @@
+<view class="page">
+  <!-- 搜索栏 -->
+  <view class="search-bar">
+    <view class="search-box">
+      <view class="search-ico"></view>
+      <input class="search-input"
+             placeholder="请输入关键字"
+             placeholder-class="ph"
+             value="{{keyword}}"
+             confirm-type="search"
+             onInput="onSearchInput"
+             onConfirm="onSearchConfirm"/>
+    </view>
+    <view class="search-btn" onTap="onSearchTap">搜索</view>
+  </view>
+
+  <view class="body">
+    <!-- 左侧 Tab：搜索模式下隐藏 -->
+    <scroll-view a:if="{{!searching}}" scroll-y class="side">
+      <block a:for="{{cats}}" a:key="id">
+        <view class="side-item {{idx === item.id ? 'active' : ''}}"
+              data-id="{{item.id}}" onTap="onCat">
+          <text>{{item.name}}</text>
+        </view>
+      </block>
+    </scroll-view>
+
+    <!-- 右侧商品 -->
+    <scroll-view scroll-y class="main {{searching ? 'main-full' : ''}}">
+      <!-- 搜索结果头条 -->
+      <view a:if="{{searching}}" class="search-summary">
+        <text class="ss-text">搜索 "{{searchKeyword}}" · {{searchTotal}} 件</text>
+        <text class="ss-cancel" onTap="onSearchCancel">取消</text>
+      </view>
+
+      <view a:if="{{searching && products.length === 0}}" class="empty">
+        <view class="empty-ico"></view>
+        <text class="empty-text">没有找到相关商品</text>
+        <text class="empty-sub">换个关键字试试吧</text>
+      </view>
+
+      <view a:else class="grid">
+        <block a:for="{{products}}" a:key="id">
+          <view class="goods" onTap="onGoods" data-id="{{item.id}}">
+            <view class="goods-img" style="background:{{item.bg}}"></view>
+            <view class="goods-name">{{item.name}}</view>
+            <view class="goods-meta">
+              <text a:if="{{item.min_price}}" class="price">¥{{item.min_price}} 起</text>
+              <text class="goods-sales">租赁量 {{item.sales}}</text>
+            </view>
+          </view>
+        </block>
+        <view style="height: 60rpx; grid-column: span 2;"></view>
+      </view>
+    </scroll-view>
+  </view>
+
+</view>

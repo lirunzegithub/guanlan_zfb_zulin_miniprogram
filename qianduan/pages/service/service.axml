@@ -1,0 +1,50 @@
+<view class="page">
+  <!-- 顶部 Banner -->
+  <view class="banner">
+    <view class="b-text">
+      <view class="b-title">客服中心</view>
+      <view class="b-sub">租赁等问题，平台客服在线答疑</view>
+      <view class="b-brand">
+        <view class="brand-dot"></view>
+        <text>观澜数码租赁</text>
+      </view>
+    </view>
+    <image class="b-photo" src="/images/kefu.png" mode="aspectFill" />
+  </view>
+
+  <!-- 客服热线（单按钮） -->
+  <view class="btn-single">
+    <view class="big-btn hotline" onTap="onPhone">
+      <view class="bb-ico ico-phone"></view>
+      <view class="bb-text">
+        <view class="bb-title">客服热线</view>
+        <view class="bb-sub">点击拨打 {{phone}}</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 常见问题 -->
+  <view class="card faq">
+    <view class="faq-head">
+      <text class="faq-title">常见问题</text>
+      <text class="faq-more">点击展开</text>
+    </view>
+    <view class="faq-list">
+      <block a:for="{{faqs}}" a:key="id">
+        <view
+          class="faq-item {{item._expanded ? 'expanded' : ''}}"
+          data-idx="{{index}}"
+          onTap="onToggleFaq"
+        >
+          <view class="faq-row">
+            <text class="faq-q">{{item.q}}</text>
+            <text class="arrow">›</text>
+          </view>
+          <view a:if="{{item._expanded}}" class="faq-a">{{item.a}}</view>
+        </view>
+      </block>
+      <view a:if="{{!faqs.length}}" class="faq-empty">暂无常见问题</view>
+    </view>
+  </view>
+
+</view>

@@ -1,0 +1,40 @@
+.page { padding: 24rpx; min-height: 100vh; }
+
+.hero {
+  background: linear-gradient(135deg, #2b7cff 0%, #1a5fd1 100%);
+  border-radius: 20rpx;
+  padding: 36rpx 32rpx;
+  color: #fff;
+  margin-bottom: 20rpx;
+}
+.hero-title { font-size: 36rpx; font-weight: 800; letter-spacing: 1rpx; }
+.hero-sub   { font-size: 22rpx; opacity: 0.85; margin-top: 10rpx; }
+
+.card {
+  background: #fff;
+  border-radius: 20rpx;
+  padding: 32rpx 32rpx 40rpx;
+}
+.intro {
+  font-size: 26rpx;
+  color: #1a1f2e;
+  line-height: 1.8;
+  padding: 24rpx 28rpx;
+  background: #f4f7fb;
+  border-radius: 14rpx;
+  border-left: 6rpx solid var(--primary);
+  margin-bottom: 28rpx;
+}
+.sec-title {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #1a1f2e;
+  padding: 24rpx 0 14rpx;
+}
+.sec-line {
+  font-size: 26rpx;
+  color: #4a5060;
+  line-height: 1.85;
+  padding: 6rpx 0;
+}
+.link { color: var(--primary); }

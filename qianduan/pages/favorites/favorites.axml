@@ -1,0 +1,35 @@
+<view class="page">
+
+  <block a:if="{{list.length > 0}}">
+    <block a:for="{{list}}" a:key="id">
+      <view class="fav-item" data-id="{{item.id}}" onTap="onGoods">
+        <view class="fav-img" style="background:{{item.bg}}"></view>
+        <view class="fav-body">
+          <view class="fav-name">{{item.name}}</view>
+          <view class="fav-meta">
+            <text class="price">¥{{item.min_price}}</text>
+            <text class="unit">/天起</text>
+            <text class="sales">租赁量 {{item.sales}}</text>
+          </view>
+          <view class="fav-actions" catchTap="noop">
+            <view
+              class="act-btn danger {{removing[item.id] ? 'disabled' : ''}}"
+              data-id="{{item.id}}"
+              data-name="{{item.name}}"
+              catchTap="onRemove"
+            >{{removing[item.id] ? '取消中…' : '取消收藏'}}</view>
+          </view>
+        </view>
+      </view>
+    </block>
+    <view style="height:60rpx"></view>
+  </block>
+
+  <view a:elif="{{loaded}}" class="empty">
+    <view class="empty-ico"></view>
+    <text class="empty-text">还没有收藏的商品</text>
+    <text class="empty-sub">看到喜欢的设备就点击爱心收藏起来吧</text>
+    <view class="empty-btn" onTap="goShop">去逛逛</view>
+  </view>
+
+</view>

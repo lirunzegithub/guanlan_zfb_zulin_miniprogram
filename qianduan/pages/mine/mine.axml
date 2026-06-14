@@ -1,0 +1,77 @@
+<view class="page">
+  <!-- 顶部背景 -->
+  <view class="header-bg"></view>
+
+  <!-- 用户信息 -->
+  <view class="user">
+    <image a:if="{{logoUrl}}" class="avatar avatar-img" src="{{logoUrl}}" mode="aspectFill" />
+    <view a:else class="avatar"></view>
+    <view class="u-info">
+      <view class="u-name">{{displayName}}</view>
+      <view class="u-sub">
+        <text a:if="{{user.verified}}">{{displaySub}}</text>
+        <text a:else>欢迎使用观澜数码租赁~</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 租赁订单 -->
+  <view class="card section">
+    <view class="sec-head">
+      <text class="sec-title">租赁订单</text>
+      <text class="sec-more" onTap="onAllOrder">全部 ›</text>
+    </view>
+    <view class="orders">
+      <block a:for="{{orderTabs}}" a:key="key">
+        <view class="o-item" data-key="{{item.key}}" onTap="onOrder">
+          <view class="o-ico {{item.cls}}"></view>
+          <view class="o-name">{{item.name}}</view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <!-- 进行中的订单（不含 已取消 / 已归还） -->
+  <view a:if="{{activeOrders.length > 0}}" class="card section active-orders">
+    <view class="sec-head">
+      <text class="sec-title">进行中的订单</text>
+      <text class="sec-more" onTap="onAllOrder">查看全部 ›</text>
+    </view>
+    <block a:for="{{activeOrders}}" a:key="id">
+      <view class="ao-card" data-id="{{item.id}}" onTap="onOrderDetail">
+        <view class="ao-thumb">
+          <image a:if="{{item.product_cover}}" class="ao-thumb-img" src="{{item.product_cover}}" mode="aspectFill" />
+          <view a:else class="ao-thumb-fallback">{{item._shortName}}</view>
+        </view>
+        <view class="ao-info">
+          <view class="ao-top">
+            <text class="ao-name">{{item.product_name}}</text>
+            <text class="ao-status {{item._statusCls}}">{{item._statusText}}</text>
+          </view>
+          <view class="ao-meta">租期：{{item._startDate}} ~ {{item._endDate}}（{{item.days}}天）</view>
+          <view class="ao-bot">
+            <text class="ao-amount">¥{{item._amountText}}</text>
+            <text a:if="{{item._cdText}}" class="ao-cd {{item._cdOverdue ? 'overdue' : ''}}">{{item._cdText}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+  </view>
+
+  <!-- 功能中心 -->
+  <view class="card section">
+    <view class="sec-head">
+      <text class="sec-title">功能中心</text>
+    </view>
+    <view class="funcs">
+      <block a:for="{{funcs}}" a:key="key">
+        <view class="f-item" data-key="{{item.key}}" onTap="onFunc">
+          <view class="f-ico {{item.cls}}"></view>
+          <view class="f-name">{{item.name}}</view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <view a:if="{{companyName}}" class="footer">{{companyName}}</view>
+</view>

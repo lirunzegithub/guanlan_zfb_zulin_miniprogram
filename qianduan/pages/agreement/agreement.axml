@@ -1,0 +1,25 @@
+<view class="page">
+  <view class="hero">
+    <view class="hero-title">观澜数码租赁服务协议</view>
+    <view class="hero-sub">版本 v{{version}} · 更新时间 {{updatedAt}}</view>
+  </view>
+
+  <view class="card">
+    <view class="intro">
+      本协议由【示例数码租赁有限责任公司】（以下简称"本公司"或"平台"）与使用本小程序进行租赁的用户（以下简称"用户"或"您"）共同签署。下单即视为您已完整阅读、理解并接受本协议全部条款。请务必在确认勾选前仔细阅读。
+    </view>
+
+    <block a:for="{{sections}}" a:for-item="sec" a:key="title">
+      <view class="sec-title">{{sec.title}}</view>
+      <block a:for="{{sec.items}}" a:for-item="line" a:key="*this">
+        <view class="sec-line">{{line}}</view>
+      </block>
+    </block>
+
+    <view class="sec-title">附则</view>
+    <view class="sec-line">本协议条款若与平台公示规则不一致，以本协议为准；如有冲突且您坚持以平台规则为准，请联系客服反馈，本公司将根据实际情况协商处理。</view>
+    <view class="sec-line">如对本协议有任何疑问，请拨打客服热线 <text class="link" onTap="onCall">400-000-0000</text>。</view>
+  </view>
+
+  <view style="height: 40rpx"></view>
+</view>
