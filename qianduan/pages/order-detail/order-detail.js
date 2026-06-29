@@ -468,10 +468,12 @@ Page({
       };
 
       // ── 阶段 ①：强制信用免押渠道 ──
+      // out_order_no 只传裸订单号；支付宝授权订单按它唯一，重试需换号，
+      // 换号与 out_request_no 由后端按"已发起次数"统一生成（首次裸号，回退 _A2…），
+      // 避免前端复用同号导致第二次冻结被支付宝拒"授权订单已存在"。
       my.showLoading({ content: '创建免押订单', mask: true });
       const r1 = await post('/api/alipay/credit/freeze', {
         ...baseBody,
-        out_request_no: o.id + '_C_' + Date.now(),
         enable_pay_channels: 'CREDITZHIMA',
       });
       my.hideLoading();
@@ -497,7 +499,7 @@ Page({
       my.showLoading({ content: '创建押金订单', mask: true });
       const r2 = await post('/api/alipay/credit/freeze', {
         ...baseBody,
-        out_request_no: o.id + '_D_' + Date.now(),
+        // 仍只传裸 out_order_no（baseBody 里）；后端会自动续号为 _A2 避免与上一次免押撞号。
         // 不传 enable_pay_channels：让阿里页面展示余额/花呗/银行卡等所有可用渠道
       });
       my.hideLoading();

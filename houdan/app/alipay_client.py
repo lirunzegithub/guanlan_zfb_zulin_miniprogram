@@ -73,7 +73,8 @@ class BaseAlipayClient:
     ) -> dict:
         raise NotImplementedError
 
-    def auth_order_query(self, out_order_no: str) -> dict:
+    def auth_order_query(self, out_order_no: str,
+                         out_request_no: Optional[str] = None) -> dict:
         raise NotImplementedError
 
     def auth_unfreeze(self, auth_no: str, out_request_no: str,

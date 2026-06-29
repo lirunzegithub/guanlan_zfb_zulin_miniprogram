@@ -108,6 +108,10 @@ def list_orders():
 @bp.get("/<oid>")
 def detail(oid):
     o = order_repo.get(oid)
+    # 兼容芝麻"信用服务守约"链接回跳：URL 里的 id=${out_order_no} 由支付宝用
+    # 授权订单号填充，可能带 _A2 等重试后缀；直查不到时按订单号还原再查一次。
+    if not o:
+        o = order_repo.get(order_id_from_out_order_no(oid))
     if not o:
         return fail(404, "订单不存在")
     return ok(_enrich(o))
@@ -510,11 +514,24 @@ def _refund_coupon_if_any(o: dict) -> None:
 
 # ---------- 状态机推进（供 alipay.notify / query 调用） ----------
 # 所有写 status 的 update 一律走 update_order，由其内部拦截器自动 sync 到支付宝订单中心。
+def order_id_from_out_order_no(out_order_no: str) -> str:
+    """支付宝授权订单号 → 本地订单号。
+
+    订单号格式为 'O' + 12 位大写 16 进制，字符集仅 [0-9A-F]，**不含下划线**。
+    据此把"按尝试递增"的 out_order_no 还原成订单号：
+      - 历史/首次冻结 out_order_no == oid（无 '_'）→ split 原样返回；
+      - 回退/重试冻结 out_order_no == oid_A2     → 截掉 '_A2' 后缀还原 oid。
+    对裸号和带后缀号都成立，故老回调老数据天然兼容。
+    """
+    return (out_order_no or "").split("_", 1)[0]
+
+
 def transition_freeze_done(out_order_no: str) -> dict | None:
     """免押成功后 audit → send（跳过原来的 awaiting_face 人脸环节）。
     同时落 send_at = 当前 unix 秒，作为 48h 发货倒计时基准。
     """
-    o = order_repo.get(out_order_no)
+    oid = order_id_from_out_order_no(out_order_no)
+    o = order_repo.get(oid)
     if not o or o.get("status") != "audit":
         return o
     # 免押成功 = 设备正式被占用，此刻扣 1 库存（原子条件扣减，扣到 0 为止不扣成负）。
@@ -528,9 +545,9 @@ def transition_freeze_done(out_order_no: str) -> dict | None:
             import logging
             logging.getLogger(__name__).warning(
                 "freeze_done: 订单 %s 商品 %s 免押成功但库存已为 0，未扣减（请后台核对）",
-                out_order_no, pid,
+                oid, pid,
             )
-    return update_order(out_order_no, {
+    return update_order(oid, {
         "status": "send",
         "send_at": int(time.time()),
     }, sync_reason="freeze_done")
@@ -544,12 +561,13 @@ def transition_unfreeze_done(out_order_no: str) -> dict | None:
 
     幂等：支付宝可能重发通知；终态再调一次只命中 if 之外的早退分支，不会重复退券/重复 sync。
     """
-    o = order_repo.get(out_order_no)
+    oid = order_id_from_out_order_no(out_order_no)
+    o = order_repo.get(oid)
     if not o:
         return None
     status = o.get("status")
     if status == "pending_cancel":
-        updated = update_order(out_order_no, {
+        updated = update_order(oid, {
             "status":       "cancelled",
             "cancelled_at": int(time.time()),
             "cancelled_by": "admin_approve",
@@ -557,7 +575,7 @@ def transition_unfreeze_done(out_order_no: str) -> dict | None:
         _refund_coupon_if_any(o)
         return updated
     if status in ("return", "overdue", "using", "return_inspecting"):
-        return update_order(out_order_no, {
+        return update_order(oid, {
             "status":      "done",
             "returned_at": o.get("returned_at") or int(time.time()),
         }, sync_reason="return_done")
@@ -566,11 +584,12 @@ def transition_unfreeze_done(out_order_no: str) -> dict | None:
 
 def transition_auth_pay_done(out_order_no: str) -> dict | None:
     """预授权转支付成功（押金/逾期租金从冻结额度划走）→ using/overdue → return"""
-    o = order_repo.get(out_order_no)
+    oid = order_id_from_out_order_no(out_order_no)
+    o = order_repo.get(oid)
     if not o:
         return None
     if o.get("status") in ("using", "overdue"):
-        return update_order(out_order_no, {"status": "return"},
+        return update_order(oid, {"status": "return"},
                             sync_reason="auth_pay_done")
     return o
 

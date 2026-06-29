@@ -218,8 +218,21 @@ def credit_freeze():
     if amount <= 0:
         return fail(10002, "冻结金额非法")
 
-    out_order_no   = body.get("out_order_no") or "RT" + uuid.uuid4().hex[:18].upper()
-    out_request_no = body.get("out_request_no") or out_order_no
+    # —— 按订单已发起冻结次数生成本次 out_order_no ——
+    # 支付宝授权订单按 out_order_no 唯一，同一号重复发起会被拒"授权订单已存在"。
+    # 用户在免押收银台点取消后回退押金，需要换一个全新的 out_order_no 才能再次冻结。
+    # 首次裸订单号（与历史/在途订单一致），之后递增后缀 _A2/_A3…，由 notify/query 反查还原。
+    from app.storage.repos import order_repo
+    order_id = (body.get("out_order_no") or "").strip()
+    _order = order_repo.get(order_id) if order_id else None
+    if _order:
+        attempt = int(_order.get("alipay_freeze_attempts") or 0) + 1
+        out_order_no = order_id if attempt == 1 else f"{order_id}_A{attempt}"
+    else:
+        # 无订单上下文（极少数老入口/裸调用）：退回原默认行为，不带订单语义
+        attempt = 1
+        out_order_no = order_id or "RT" + uuid.uuid4().hex[:18].upper()
+    out_request_no = body.get("out_request_no") or f"{out_order_no}_R{int(time.time())}"
     order_title    = body.get("order_title") or "观澜数码租赁押金"
 
     extra = {}
@@ -253,13 +266,17 @@ def credit_freeze():
     except Exception as e:
         return fail(10006, f"调用支付宝失败：{e}")
 
-    # 把 out_request_no 落库到订单上，detail.query 接口必须 (out_order_no + out_request_no) 配对
-    # 同一订单可能多次发起 freeze（信用/押金两阶段），覆盖为最近一次
+    # 把本次尝试号 + 当前生效 out_order_no/out_request_no 落库到订单上：
+    #   - detail.query / order.query 接口必须 (out_order_no + out_request_no) 配对，读这里；
+    #   - alipay_freeze_attempts 供下一次回退冻结继续递增后缀；
+    #   - alipay_out_order_no 记录当前生效授权订单号（裸号或带后缀）。
+    # 同一订单多次发起 freeze（免押→押金两阶段），覆盖为最近一次。
     try:
-        from app.storage.repos import order_repo
-        if order_repo.get(out_order_no):
-            order_repo.update(out_order_no, {
-                "alipay_out_request_no": out_request_no,
+        if _order:
+            order_repo.update(order_id, {
+                "alipay_freeze_attempts":     attempt,
+                "alipay_out_order_no":        out_order_no,
+                "alipay_out_request_no":      out_request_no,
                 "alipay_enable_pay_channels": enable_pay_channels or "",
             })
     except Exception:
@@ -275,11 +292,17 @@ def credit_query():
     若已 FROZEN/AUTHORIZED，自动把对应订单从 audit 推进到 send（免押成功后直接进发货流程）
     """
     body = request.get_json(silent=True) or {}
-    out_order_no = body.get("out_order_no")
-    if not out_order_no:
+    order_id = body.get("out_order_no")        # 前端传裸订单号
+    if not order_id:
         return fail(10007, "缺少 out_order_no")
+    # 查询要用"当前生效"的授权订单号 + 配对的 out_request_no（重试后是带后缀号），
+    # 而非裸订单号；否则查不到支付宝侧实际冻结的那笔授权订单。老订单无该字段→回退裸号。
+    from app.storage.repos import order_repo
+    _order = order_repo.get(order_id)
+    active_oon   = (_order.get("alipay_out_order_no") or order_id) if _order else order_id
+    active_reqno = (_order.get("alipay_out_request_no") or "") if _order else ""
     try:
-        res = get_client().auth_order_query(out_order_no)
+        res = get_client().auth_order_query(active_oon, out_request_no=active_reqno or None)
     except Exception as e:
         return fail(10008, f"查询失败：{e}")
 
@@ -289,7 +312,7 @@ def credit_query():
 
     if (res.get("status") == "FROZEN") or res.get("found"):
         from app.routes.orders import transition_freeze_done
-        transition_freeze_done(out_order_no)
+        transition_freeze_done(order_id)       # 用裸订单号推进状态机
     return ok(res)
 
 
@@ -372,15 +395,18 @@ def notify_auth_freeze():
     out_order_no = params.get("out_order_no")
     status = params.get("status", "")
     try:
+        # 支付宝回传的 out_order_no 可能带重试后缀（_A2…），先还原成本地订单号
+        from app.routes.orders import order_id_from_out_order_no
+        oid = order_id_from_out_order_no(out_order_no)
         # 把 auth_no / out_request_no 落库到订单上（detail.query 接口需要）
         from app.storage.repos import order_repo
-        if order_repo.get(out_order_no):
+        if order_repo.get(oid):
             patch = {}
             if params.get("auth_no"):        patch["alipay_auth_no"] = params["auth_no"]
             if params.get("out_request_no"): patch["alipay_out_request_no"] = params["out_request_no"]
             if params.get("operation_id"):   patch["alipay_operation_id"] = params["operation_id"]
             if patch:
-                order_repo.update(out_order_no, patch)
+                order_repo.update(oid, patch)
 
         if status in ("SUCCESS", "FROZEN"):
             from app.routes.orders import transition_freeze_done

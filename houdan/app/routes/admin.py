@@ -1460,18 +1460,20 @@ def order_alipay_detail(oid):
     auth_no        = (o.get("alipay_auth_no") or "").strip()
     operation_id   = (o.get("alipay_operation_id") or "").strip()
     operation_type = (request.args.get("operation_type") or "FREEZE").upper()
+    # 重试冻结后支付宝侧授权订单号带后缀，必须用当前生效号配对查询；老订单无该字段→回退裸号
+    active_oon     = (o.get("alipay_out_order_no") or "").strip() or oid
 
     # 没有任何配对参数 → 订单还没发起过 freeze，直接返回空
     if not out_request_no and not auth_no:
         return ok({
             "found": False,
             "reason": "订单还未发起过支付宝预授权（缺 out_request_no / auth_no）",
-            "out_order_no": oid,
+            "out_order_no": active_oon,
         })
 
     try:
         res = get_client().auth_operation_detail_query(
-            out_order_no=oid,
+            out_order_no=active_oon,
             out_request_no=out_request_no or None,
             auth_no=auth_no or None,
             operation_id=operation_id or None,

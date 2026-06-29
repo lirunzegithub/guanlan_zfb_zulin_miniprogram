@@ -161,6 +161,13 @@ order_repo = SqliteRepository(
         "sync_status": "", "sync_ok": False, "sync_at": None, "sync_err": "",
         # alipay 资金授权号（freeze notify 写入，trade.pay 时复用）
         "alipay_auth_no": "", "alipay_out_request_no": "", "alipay_operation_id": "",
+        # 预授权重试支持：同一订单可能多次发起 freeze（免押取消→回退押金）。
+        # 支付宝授权订单按 out_order_no 唯一，复用同一号会被拒"订单已存在"，
+        # 故每次冻结生成带递增后缀的 out_order_no（首次裸号，之后 _A2/_A3…）。
+        #   alipay_freeze_attempts = 已发起冻结次数，决定下一次后缀
+        #   alipay_out_order_no    = 当前生效的支付宝授权订单号（裸号或带后缀）
+        # 旧订单行无这两个字段，读取处一律 .get(k) or 兜底，无需数据迁移。
+        "alipay_freeze_attempts": 0, "alipay_out_order_no": "",
     },
     id_type="str",
 )
