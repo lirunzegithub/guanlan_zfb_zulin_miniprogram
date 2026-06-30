@@ -2096,7 +2096,7 @@ def admin_create_charge(oid):
             if first_cover.startswith(("http://", "https://")):
                 product_image_url = first_cover
             elif first_cover.startswith("/"):
-                product_image_url = AlipayConfig.NOTIFY_BASE.rstrip("/") + first_cover
+                product_image_url = AlipayConfig.notify_base() + first_cover
         if not product_name_for_card:
             product_name_for_card = _p.get("name") or ""
 

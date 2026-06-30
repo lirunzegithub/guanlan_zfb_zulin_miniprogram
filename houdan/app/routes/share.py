@@ -34,7 +34,7 @@ def _abs_url(url: str) -> str:
     if url.startswith(("http://", "https://", "data:")):
         return url
     if url.startswith("/"):
-        return AlipayConfig.NOTIFY_BASE.rstrip("/") + url
+        return AlipayConfig.notify_base() + url
     return url
 
 

@@ -67,30 +67,32 @@ class AlipayConfig:
     # 未启用接口加密则留空。
     AES_ENCRYPT_KEY        = ""          # 例如 "xxxxxxxxxxxxxxxxxxxxxx=="
 
-    # ── 3. 异步通知 ────────────────────────────────────────
-    # 改成你自己的公网 HTTPS 域名（支付宝异步通知会回调到这里）。
+    # ── 3. 异步通知 / 公网域名 ──────────────────────────────
+    # 公网 HTTPS 域名：既是支付宝异步通知/回调地址的前缀，也是小程序图片的
+    # 绝对地址前缀（products/banners/comments 等接口把相对图片路径拼到它上面）。
+    # 运行期一律通过 cls.notify_base() 读取：优先取管理后台「设置」里配的
+    # notify_base，未配置时回落到下面这个占位常量。换域名只改后台设置即可。
     NOTIFY_BASE = "https://your-domain.example.com"
 
-    NOTIFY_URL_AUTH_FREEZE   = f"{NOTIFY_BASE}/api/alipay/notify/auth_freeze"
-    NOTIFY_URL_AUTH_UNFREEZE = f"{NOTIFY_BASE}/api/alipay/notify/auth_unfreeze"
-    NOTIFY_URL_AUTH_PAY      = f"{NOTIFY_BASE}/api/alipay/notify/auth_pay"
-    NOTIFY_URL_TRADE         = f"{NOTIFY_BASE}/api/alipay/notify/trade"
-    NOTIFY_URL_TRADE_REFUND  = f"{NOTIFY_BASE}/api/alipay/notify/trade_refund"
-    NOTIFY_URL_ZHIMA         = f"{NOTIFY_BASE}/api/alipay/notify/zhima"
+    # 各类回调的相对路径；绝对地址在 cls.notify_url() 里基于当前 notify_base
+    # 动态拼出，避免把域名烤进常量后改不动。
+    NOTIFY_PATH_AUTH_FREEZE         = "/api/alipay/notify/auth_freeze"
+    NOTIFY_PATH_AUTH_UNFREEZE       = "/api/alipay/notify/auth_unfreeze"
+    NOTIFY_PATH_AUTH_PAY            = "/api/alipay/notify/auth_pay"
+    NOTIFY_PATH_TRADE               = "/api/alipay/notify/trade"
+    NOTIFY_PATH_TRADE_REFUND        = "/api/alipay/notify/trade_refund"
+    NOTIFY_PATH_ZHIMA               = "/api/alipay/notify/zhima"
     # 商家订单履约同步回调：用户在支付宝端「已签收」「确认使用」等动作产生
-    NOTIFY_URL_MERCHANT_ORDER_SYNC = f"{NOTIFY_BASE}/api/alipay/notify/merchant_order_sync"
-
+    NOTIFY_PATH_MERCHANT_ORDER_SYNC = "/api/alipay/notify/merchant_order_sync"
     # 实人认证 return_url：小程序 my.startAPVerify 唤起不会真的跳转到这里，
     # 但 alipay 对 merchant_config.return_url 做格式校验，必须是合法 https URL。
-    CERTIFY_RETURN_URL = f"{NOTIFY_BASE}/api/alipay/certify/return"
-
-    # 应用网关（gateway_url）：开放平台后台「开发设置 → 应用网关」要填的地址，
+    CERTIFY_RETURN_PATH = "/api/alipay/certify/return"
+    # 应用网关（gateway_url）：开放平台「开发设置 → 应用网关」要填的地址，
     # 接收平台级消息（授权变更/模板消息订阅/公告等），区别于业务通知 notify_url
-    GATEWAY_URL = f"{NOTIFY_BASE}/api/alipay/notify/gateway"
-
-    # 授权回调地址（用于开放平台 OAuth 授权回跳）。小程序 my.getAuthCode 流程不会真用到，
+    GATEWAY_PATH = "/api/alipay/notify/gateway"
+    # 授权回调地址（开放平台 OAuth 授权回跳）。小程序 my.getAuthCode 不会真用到，
     # 但开放平台「授权回调地址」字段要求填一个合法 URL 做合规检查。
-    OAUTH_CALLBACK_URL = f"{NOTIFY_BASE}/api/alipay/oauth/callback"
+    OAUTH_CALLBACK_PATH = "/api/alipay/oauth/callback"
 
     # ── 4. 信用免押 ────────────────────────────────────────
     PRODUCT_CODE        = "PRE_AUTH_ONLINE"
@@ -124,6 +126,24 @@ class AlipayConfig:
         return cls.APP_ID
 
     @classmethod
+    def notify_base(cls) -> str:
+        """公网域名（无尾斜杠）：优先取 settings.json 的 notify_base，
+        未配置时回落到 NOTIFY_BASE 常量。图片绝对地址 + 支付宝回调都用它。"""
+        try:
+            from app.settings import get as _setting_get
+            v = (_setting_get("notify_base") or "").strip()
+            if v:
+                return v.rstrip("/")
+        except Exception:
+            pass
+        return cls.NOTIFY_BASE.rstrip("/")
+
+    @classmethod
+    def notify_url(cls, path: str) -> str:
+        """把回调相对路径拼成基于当前 notify_base 的绝对地址。"""
+        return cls.notify_base() + path
+
+    @classmethod
     def gateway(cls) -> str:
         return cls.GATEWAY_SANDBOX if cls.ENV == "sandbox" else cls.GATEWAY_PROD
 
@@ -141,20 +161,20 @@ class AlipayConfig:
         if not cls.app_id():                missing.append("APP_ID")
         if not cls.app_private_key():       missing.append("APP_PRIVATE_KEY 文件")
         if not cls.alipay_public_key():     missing.append("ALIPAY_PUBLIC_KEY 文件")
-        if not cls.NOTIFY_URL_AUTH_FREEZE:
-            return True, "ok（未配 NOTIFY_URL，收不到异步通知，需主动 query）"
+        if cls.notify_base() == cls.NOTIFY_BASE.rstrip("/"):
+            return True, "ok（未配公网域名 notify_base，收不到异步通知，需主动 query）"
         return (not missing), ("ok" if not missing else "缺少: " + ", ".join(missing))
 
     @classmethod
     def all_notify_urls(cls) -> dict:
         return {
-            "auth_freeze":           cls.NOTIFY_URL_AUTH_FREEZE,
-            "auth_unfreeze":         cls.NOTIFY_URL_AUTH_UNFREEZE,
-            "auth_pay":              cls.NOTIFY_URL_AUTH_PAY,
-            "trade":                 cls.NOTIFY_URL_TRADE,
-            "trade_refund":          cls.NOTIFY_URL_TRADE_REFUND,
-            "zhima":                 cls.NOTIFY_URL_ZHIMA,
-            "merchant_order_sync":   cls.NOTIFY_URL_MERCHANT_ORDER_SYNC,
+            "auth_freeze":           cls.notify_url(cls.NOTIFY_PATH_AUTH_FREEZE),
+            "auth_unfreeze":         cls.notify_url(cls.NOTIFY_PATH_AUTH_UNFREEZE),
+            "auth_pay":              cls.notify_url(cls.NOTIFY_PATH_AUTH_PAY),
+            "trade":                 cls.notify_url(cls.NOTIFY_PATH_TRADE),
+            "trade_refund":          cls.notify_url(cls.NOTIFY_PATH_TRADE_REFUND),
+            "zhima":                 cls.notify_url(cls.NOTIFY_PATH_ZHIMA),
+            "merchant_order_sync":   cls.notify_url(cls.NOTIFY_PATH_MERCHANT_ORDER_SYNC),
         }
 
     @classmethod

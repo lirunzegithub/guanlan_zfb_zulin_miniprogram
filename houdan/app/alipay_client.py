@@ -321,8 +321,7 @@ class RealAlipayClient(BaseAlipayClient):
             model.extra_param = json.dumps(merged_extra, ensure_ascii=False)
 
         req = AlipayFundAuthOrderAppFreezeRequest(biz_model=model)
-        if AlipayConfig.NOTIFY_URL_AUTH_FREEZE:
-            req.notify_url = AlipayConfig.NOTIFY_URL_AUTH_FREEZE
+        req.notify_url = AlipayConfig.notify_url(AlipayConfig.NOTIFY_PATH_AUTH_FREEZE)
 
         # sdkExecute 在 Python SDK 里叫 sdk_execute，返回拼好的 orderStr
         order_str = self._client.sdk_execute(req)
@@ -453,8 +452,7 @@ class RealAlipayClient(BaseAlipayClient):
         if out_request_no: model.out_request_no = out_request_no
         if refund_reason:  model.refund_reason = refund_reason
         req = AlipayTradeRefundRequest(biz_model=model)
-        if AlipayConfig.NOTIFY_URL_TRADE_REFUND:
-            req.notify_url = AlipayConfig.NOTIFY_URL_TRADE_REFUND
+        req.notify_url = AlipayConfig.notify_url(AlipayConfig.NOTIFY_PATH_TRADE_REFUND)
         resp_str = self._client.execute(req)
         resp = json.loads(resp_str) if isinstance(resp_str, str) else resp_str
         body = resp.get("alipay_trade_refund_response", resp)
@@ -574,8 +572,7 @@ class RealAlipayClient(BaseAlipayClient):
         if remark:
             model.remark = remark
         req = AlipayFundAuthOrderUnfreezeRequest(biz_model=model)
-        if AlipayConfig.NOTIFY_URL_AUTH_UNFREEZE:
-            req.notify_url = AlipayConfig.NOTIFY_URL_AUTH_UNFREEZE
+        req.notify_url = AlipayConfig.notify_url(AlipayConfig.NOTIFY_PATH_AUTH_UNFREEZE)
         body = self._execute(req, "alipay_fund_auth_order_unfreeze_response")
         return {
             "auth_no": body.get("auth_no") or auth_no,
@@ -607,7 +604,7 @@ class RealAlipayClient(BaseAlipayClient):
         #   return_url:            必填，合法 https URL；小程序场景实际不会跳转，仅做格式校验
         #   face_reserve_strategy: "reserve" 保留人脸照片（用于后续复用） / "never" 不保留
         merchant_cfg = OpenCertifyMerchantConfig()
-        merchant_cfg.return_url = AlipayConfig.CERTIFY_RETURN_URL
+        merchant_cfg.return_url = AlipayConfig.notify_url(AlipayConfig.CERTIFY_RETURN_PATH)
         merchant_cfg.face_reserve_strategy = "reserve"
 
         model = AlipayUserCertifyOpenInitializeModel()

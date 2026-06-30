@@ -172,7 +172,7 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
             item_unit_price=float(order.get("amount") or 0),
             business_info=business_info,
             link_page=link_page,
-            notify_url=AlipayConfig.NOTIFY_URL_MERCHANT_ORDER_SYNC,
+            notify_url=AlipayConfig.notify_url(AlipayConfig.NOTIFY_PATH_MERCHANT_ORDER_SYNC),
         )
         api_ok = True
     except Exception as e:

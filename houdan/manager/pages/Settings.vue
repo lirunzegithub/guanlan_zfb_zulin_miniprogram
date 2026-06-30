@@ -169,6 +169,21 @@
       </div>
 
       <div class="form-field danger">
+        <label class="form-label">公网域名（图片 / 支付宝回调）</label>
+        <input class="input mono" type="text" v-model.trim="form.notify_base" placeholder="如 https://your-domain.com" />
+        <div class="form-hint danger-hint">
+          ⚠️ 小程序商品封面 / Banner / 评价图等网络图片的<b>绝对地址前缀</b>，同时也是
+          支付宝异步通知 / 回调地址（freeze / unfreeze / refund / 实人认证 return_url 等）的前缀。
+          <ol>
+            <li>必须是 <code>https://</code> 开头的<b>已备案</b>公网域名，结尾不要带 <code>/</code></li>
+            <li>该域名要加入小程序「服务器域名 / downloadFile 合法域名」白名单，否则真机图片仍被拦</li>
+            <li>留空 = 回落到代码里的占位域名 <code>your-domain.example.com</code>（图片不显示、回调打不到）</li>
+          </ol>
+          改后下一次接口返回的图片地址 / 下一笔支付宝请求立即用新域名，无需重启。
+        </div>
+      </div>
+
+      <div class="form-field danger">
         <label class="form-label">支付宝 / 小程序 APPID</label>
         <input class="input mono" type="text" v-model.trim="form.alipay_app_id" placeholder="如 2021000000000000" />
         <div class="form-hint danger-hint">
@@ -204,6 +219,7 @@ export default {
       service_phone:        '',
       company_name:         '',
       logo_url:             '',
+      notify_base:          '',
       alipay_app_id:        '',
       freeze_includes_rent: true,
       allow_manual_date_pick: true,

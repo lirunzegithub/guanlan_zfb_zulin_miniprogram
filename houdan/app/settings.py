@@ -18,6 +18,10 @@ _lock = threading.Lock()
 
 # 默认值。新增字段直接加在这里，旧 settings.json 不存在该 key 时自动回落到默认。
 _DEFAULTS: dict[str, Any] = {
+    # 公网 HTTPS 域名：支付宝异步通知/回调地址前缀 + 小程序图片绝对地址前缀都用它。
+    # 必须是已备案、且已加入小程序「服务器域名 / downloadFile 合法域名」白名单的域名。
+    # 空 = 回落到 config.py 的 NOTIFY_BASE 占位常量（图片不显示、回调打不到）。
+    "notify_base":          "",
     "ship_free_days":       3,                   # 物流免租期（天）
     "service_phone":        "400-000-0000",      # 客服电话（部署后在管理后台「设置」里改成自己的）
     "alipay_app_id":        "",                  # 支付宝/小程序 APPID（管理后台「设置」里填）
