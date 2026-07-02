@@ -313,10 +313,10 @@ class RealAlipayClient(BaseAlipayClient):
         # 任一字段缺失，阿里都会把请求降级为普通预授权（用户看到选择付款方式页，
         # 而不是图中那张「芝麻信用 | 免押」授权页）。
         merged_extra = dict(extra_param or {})
-        if AlipayConfig.SERVICE_ID and "serviceId" not in merged_extra:
-            merged_extra["serviceId"] = AlipayConfig.SERVICE_ID
-        if AlipayConfig.SCENE_CODE and "category" not in merged_extra:
-            merged_extra["category"] = AlipayConfig.SCENE_CODE
+        if AlipayConfig.service_id() and "serviceId" not in merged_extra:
+            merged_extra["serviceId"] = AlipayConfig.service_id()
+        if AlipayConfig.scene_code() and "category" not in merged_extra:
+            merged_extra["category"] = AlipayConfig.scene_code()
         if merged_extra:
             model.extra_param = json.dumps(merged_extra, ensure_ascii=False)
 

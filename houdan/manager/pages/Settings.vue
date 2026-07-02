@@ -20,6 +20,59 @@
     <div v-if="loading" class="loading" style="padding:40px">加载中…</div>
     <div v-else class="form-grid">
 
+      <!-- ===== 支付宝证书 / 密钥自检 ===== -->
+      <div class="selfcheck">
+        <div class="sc-head">
+          <div>
+            <div class="sc-title">
+              支付宝证书自检
+              <span v-if="sc.result" :class="['sc-badge', 'sc-'+sc.result.summary.overall]">
+                {{ overallLabel(sc.result.summary.overall) }}
+              </span>
+            </div>
+            <div class="sc-desc">
+              公钥模式：校验应用私钥 / 支付宝公钥 / 应用公钥是否齐备、配对，并联网验证与开放平台是否配套。仅只读诊断。
+            </div>
+          </div>
+          <div class="row" style="gap:8px">
+            <label class="sc-probe">
+              <input type="checkbox" v-model="sc.probe" />联网验证
+            </label>
+            <button class="btn" :disabled="sc.running" @click="runSelfcheck">
+              {{ sc.running ? '检测中…' : '开始自检' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="sc.error" class="sc-err">{{ sc.error }}</div>
+
+        <template v-if="sc.result">
+          <div class="sc-summary">
+            APPID <code>{{ sc.result.summary.app_id || '未配置' }}</code>
+            · 环境 <code>{{ sc.result.summary.env }}</code>
+            · 通过 {{ sc.result.summary.ok }} / 警告 {{ sc.result.summary.warn }} / 失败 {{ sc.result.summary.fail }}
+          </div>
+
+          <ul class="sc-list">
+            <li v-for="it in sc.result.items" :key="it.key" :class="'sc-'+it.status">
+              <span class="sc-ico">{{ statusIco(it.status) }}</span>
+              <div class="sc-body">
+                <div class="sc-label">{{ it.label }}</div>
+                <div v-if="it.detail" class="sc-detail">{{ it.detail }}</div>
+                <div v-if="it.hint" class="sc-hint">建议：{{ it.hint }}</div>
+              </div>
+            </li>
+          </ul>
+
+          <div class="sc-fp">
+            <div class="sc-fp-title">密钥指纹（MD5，用于和开放平台后台肉眼核对，非私钥明文）</div>
+            <div class="sc-fp-row"><span>应用公钥</span><code>{{ sc.result.fingerprints.app_public_key || '—' }}</code></div>
+            <div class="sc-fp-row"><span>支付宝公钥</span><code>{{ sc.result.fingerprints.alipay_public_key || '—' }}</code></div>
+            <div class="sc-fp-row"><span>应用私钥</span><code>{{ sc.result.fingerprints.app_private_key || '—' }}</code></div>
+          </div>
+        </template>
+      </div>
+
       <div class="form-field">
         <label class="form-label">软件 LOGO</label>
         <div class="logo-edit">
@@ -82,6 +135,9 @@
           ・<b>仅押金</b>：只冻押金作担保，租金到期再单独扣<br>
           注：仅影响<b>新下单</b>；已下单订单按下单时快照（freeze_amount 字段）执行。
         </div>
+        <a class="link-out" href="https://opendocs.alipay.com/open/064jhe" target="_blank" rel="noopener noreferrer">
+          支付宝官方文档：线上资金授权冻结接口（freeze） ↗
+        </a>
       </div>
 
       <div class="form-field">
@@ -149,6 +205,9 @@
           Token 由光影系统 boss 在小程序「设置」页生成并复制到这里；配置后发货填货号时自动加载商品卡片。
           光影侧删除该 Token 后立即失效。留空 = 不对接。
         </div>
+        <a class="link-out" href="https://guangying.lirunze.top" target="_blank" rel="noopener noreferrer">
+          前往光影进销存官方网站 ↗
+        </a>
       </div>
 
       <div class="form-field">
@@ -181,6 +240,38 @@
           </ol>
           改后下一次接口返回的图片地址 / 下一笔支付宝请求立即用新域名，无需重启。
         </div>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">信用借还 SERVICE_ID</label>
+        <input class="input mono" type="text" v-model.trim="form.alipay_service_id" placeholder="如 2026000000000000000000000000" />
+        <div class="form-hint">
+          开放平台「信用服务管理」里创建信用免押服务后拿到的服务 ID。免押下单必配：<br>
+          留空 = 支付宝识别不到信用借还业务，免押会<b>降级为普通预授权</b>（用户看不到免押授权页，只能冻结押金）。
+        </div>
+        <a class="link-out" href="https://opendocs.alipay.com/open/03w0a6" target="_blank" rel="noopener noreferrer">
+          支付宝官方文档：芝麻免押产品介绍 ↗
+        </a>
+        <a class="link-out" href="https://opendocs.alipay.com/open/03w0a8" target="_blank" rel="noopener noreferrer">
+          支付宝官方文档：芝麻免押接入指南（含服务创建） ↗
+        </a>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">信用借还 业务类目（category）</label>
+        <input class="input mono" type="text" v-model.trim="form.alipay_scene_code" placeholder="如 RENT_DIGITAL" />
+        <div class="form-hint">
+          告诉支付宝这是哪类租赁业务，取值必须在官方「信用预授权类目」表内：
+          <code>RENT_DIGITAL</code>(数码其他) / <code>RENT_PHONE</code>(手机) /
+          <code>RENT_COMPUTER</code>(电脑\平板) / <code>RENT_CAMERA</code>(数码摄像) 等。
+          有合理默认值 <code>RENT_DIGITAL</code>，一般无需改；与 SERVICE_ID 配套才能触发免押。
+        </div>
+        <a class="link-out" href="https://opendocs.alipay.com/open/10719" target="_blank" rel="noopener noreferrer">
+          支付宝官方文档：信用预授权类目对照表（category 全部合法取值） ↗
+        </a>
+        <a class="link-out" href="https://opendocs.alipay.com/open/03w0ao" target="_blank" rel="noopener noreferrer">
+          支付宝官方文档：芝麻免押常见问题 ↗
+        </a>
       </div>
 
       <div class="form-field danger">
@@ -221,6 +312,8 @@ export default {
       logo_url:             '',
       notify_base:          '',
       alipay_app_id:        '',
+      alipay_service_id:    '',
+      alipay_scene_code:    '',
       freeze_includes_rent: true,
       allow_manual_date_pick: true,
       allow_zero_rent:        false,
@@ -230,6 +323,22 @@ export default {
     });
     const msg = ref(null);
     const logoUploading = ref(false);
+
+    // ── 支付宝证书 / 密钥自检 ──
+    const sc = reactive({ running: false, probe: true, result: null, error: '' });
+    const runSelfcheck = async () => {
+      sc.running = true;
+      sc.error = '';
+      try {
+        sc.result = await api.alipaySelfcheck(sc.probe);
+      } catch (e) {
+        sc.error = e.message || '自检失败';
+      } finally {
+        sc.running = false;
+      }
+    };
+    const statusIco = (s) => ({ ok: '✅', warn: '⚠️', fail: '❌' }[s] || '•');
+    const overallLabel = (s) => ({ ok: '全部通过', warn: '有警告', fail: '存在异常' }[s] || s);
 
     // 相对路径补成可预览的绝对地址（后台与后端同域，/ 开头直接可用）
     const absUrl = (u) => {
@@ -308,7 +417,8 @@ export default {
     };
 
     onMounted(reload);
-    return { auth, isAdmin, loading, saving, form, dirty, msg, reload, save, logoUploading, onLogoPick, absUrl };
+    return { auth, isAdmin, loading, saving, form, dirty, msg, reload, save, logoUploading, onLogoPick, absUrl,
+             sc, runSelfcheck, statusIco, overallLabel };
   },
 };
 </script>
@@ -376,6 +486,16 @@ export default {
   color: #6b7280;
   line-height: 1.55;
 }
+.link-out {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #4d8dff;
+  text-decoration: none;
+}
+.link-out:hover { text-decoration: underline; }
 .form-field.danger .form-label::after {
   content: '高危';
   display: inline-block;
@@ -403,6 +523,41 @@ export default {
   padding: 1px 4px;
   border-radius: 2px;
 }
+/* ===== 支付宝证书自检 ===== */
+.selfcheck {
+  border: 1px solid #e5e8ee;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfcfe;
+}
+.sc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.sc-title { font-size: 15px; font-weight: 600; color: #1a1f2e; display: flex; align-items: center; gap: 8px; }
+.sc-desc { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.5; max-width: 460px; }
+.sc-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; font-weight: 500; }
+.sc-badge.sc-ok   { background: #e8f7ee; color: #2a7942; }
+.sc-badge.sc-warn { background: #fff4e0; color: #a8690a; }
+.sc-badge.sc-fail { background: #fdecea; color: #c0260b; }
+.sc-probe { font-size: 12px; color: #4b5563; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.sc-probe input { accent-color: #4d8dff; }
+.sc-err { margin-top: 12px; padding: 8px 12px; background: #fdecea; color: #c0260b; border-radius: 4px; font-size: 12px; }
+.sc-summary { margin-top: 14px; font-size: 12px; color: #4b5563; }
+.sc-summary code { font-family: ui-monospace, Menlo, monospace; background: #eef1f6; padding: 1px 5px; border-radius: 3px; }
+.sc-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sc-list li { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; align-items: flex-start; }
+.sc-list li.sc-warn { background: #fff9ef; }
+.sc-list li.sc-fail { background: #fef4f2; }
+.sc-ico { font-size: 14px; line-height: 1.5; flex-shrink: 0; }
+.sc-body { flex: 1; min-width: 0; }
+.sc-label { font-size: 13px; color: #1a1f2e; font-weight: 500; }
+.sc-detail { font-size: 12px; color: #4b5563; margin-top: 2px; word-break: break-all; font-family: ui-monospace, Menlo, monospace; }
+.sc-hint { font-size: 12px; color: #a8690a; margin-top: 3px; line-height: 1.5; }
+.sc-list li.sc-fail .sc-hint { color: #c0260b; }
+.sc-fp { margin-top: 14px; padding: 10px 12px; background: #fff; border: 1px dashed #d9dee7; border-radius: 6px; }
+.sc-fp-title { font-size: 11px; color: #6b7280; margin-bottom: 6px; }
+.sc-fp-row { display: flex; gap: 10px; font-size: 12px; margin: 3px 0; }
+.sc-fp-row span { color: #6b7280; width: 72px; flex-shrink: 0; }
+.sc-fp-row code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #1a1f2e; word-break: break-all; }
+
 .toast {
   position: fixed;
   bottom: 30px;

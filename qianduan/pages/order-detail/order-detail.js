@@ -443,8 +443,10 @@ Page({
   },
 
   // -------------------- 预授权（audit 状态触发） --------------------
-  // 两阶段流程：① 先强制免押授权页（enable_pay_channels=CREDITZHIMA）
-  //   ② 免押失败/被拒 → 提示用户 → 用户确认后再发不限渠道的请求走押金
+  // 单次不指定渠道：分流全部交给支付宝。后端已注入 serviceId + category，
+  // 够格用户在原生页看到「芝麻信用免押」授权（不冻资金），不够格则同页自动切
+  // 余额/花呗/银行卡冻结押金——一步到位，不再出现"评估不通过/请选其他支付工具"的
+  // 中间态。免押与押金在后端走同一状态机（都进待发货），仅 payment_method 落库不同。
   async onCreditFreeze() {
     const o = this.data.o;
     if (!o || !o.id || this.data.freezing) return;
@@ -461,58 +463,30 @@ Page({
       const freezeAmount = Number(o.freeze_amount || 0)
         || (Number(o.deposit_freeze || 0) + (includesRent ? Number(o.amount || 0) : 0));
       const titleSuffix  = includesRent ? ' - 押金+租金' : ' - 押金';
-      const baseBody = {
+
+      // out_order_no 只传裸订单号；支付宝授权订单按它唯一，用户取消后重试需换号，
+      // 换号与 out_request_no 由后端按"已发起次数"统一生成（首次裸号，重试 _A2…），
+      // 避免复用同号被支付宝拒"授权订单已存在"。
+      // 不传 enable_pay_channels → 后端不设该字段 → 支付宝按用户实际能力自动分流。
+      my.showLoading({ content: '创建订单', mask: true });
+      const r = await post('/api/alipay/credit/freeze', {
         out_order_no: o.id,
         order_title:  (o.product_name || '租赁订单') + titleSuffix,
         amount: freezeAmount,
-      };
-
-      // ── 阶段 ①：强制信用免押渠道 ──
-      // out_order_no 只传裸订单号；支付宝授权订单按它唯一，重试需换号，
-      // 换号与 out_request_no 由后端按"已发起次数"统一生成（首次裸号，回退 _A2…），
-      // 避免前端复用同号导致第二次冻结被支付宝拒"授权订单已存在"。
-      my.showLoading({ content: '创建免押订单', mask: true });
-      const r1 = await post('/api/alipay/credit/freeze', {
-        ...baseBody,
-        enable_pay_channels: 'CREDITZHIMA',
       });
       my.hideLoading();
 
-      const paid1 = await this._tradePay(r1.order_str);
-      if (paid1) {
-        // 免押成功 —— 直接落地
-        my.showLoading({ content: '确认结果', mask: true });
-        await post('/api/alipay/credit/query', { out_order_no: o.id });
-        my.hideLoading();
-        my.alert({
-          title: '免押成功',
-          content: '订单已进入待发货，将尽快安排出库',
-        });
-        this.loadOrder(o.id);
-        return;
-      }
+      const paid = await this._tradePay(r.order_str);
+      if (!paid) { my.showToast({ content: '已取消', type: 'none' }); return; }
 
-      // ── 阶段 ②：免押被拒/取消，问用户要不要走押金 ──
-      const fallback = await this._confirmFallbackDeposit(o.deposit_freeze || 0);
-      if (!fallback) { my.showToast({ content: '已取消', type: 'none' }); return; }
-
-      my.showLoading({ content: '创建押金订单', mask: true });
-      const r2 = await post('/api/alipay/credit/freeze', {
-        ...baseBody,
-        // 仍只传裸 out_order_no（baseBody 里）；后端会自动续号为 _A2 避免与上一次免押撞号。
-        // 不传 enable_pay_channels：让阿里页面展示余额/花呗/银行卡等所有可用渠道
-      });
-      my.hideLoading();
-
-      const paid2 = await this._tradePay(r2.order_str);
-      if (!paid2) { my.showToast({ content: '已取消', type: 'none' }); return; }
-
+      // 确认结果：后端按支付宝返回的 payment_method 判定免押/押金并落库，
+      // 两者都从 audit 推进到 send（待发货），无二次人脸认证环节。
       my.showLoading({ content: '确认结果', mask: true });
-      await post('/api/alipay/credit/query', { out_order_no: o.id });
+      const q = await post('/api/alipay/credit/query', { out_order_no: o.id });
       my.hideLoading();
       my.alert({
-        title: '押金支付成功',
-        content: '订单已进入待认证，请完成人脸认证后将自动安排发货',
+        title: (q && q.is_credit) ? '免押成功' : '押金冻结成功',
+        content: '订单已进入待发货，将尽快安排出库',
       });
       this.loadOrder(o.id);
     } catch (e) {
@@ -537,19 +511,6 @@ Page({
       });
     });
   },
-  // 免押失败兜底询问：用户确认了才发第二次（押金）freeze 请求
-  _confirmFallbackDeposit(amount) {
-    return new Promise((resolve) => {
-      my.confirm({
-        title: '暂时无法为你减免押金',
-        content: `你的芝麻信用暂未达到免押门槛。\n是否改用押金支付？需冻结 ¥${amount}，租期结束后原路退还。`,
-        confirmButtonText: '改用押金',
-        cancelButtonText: '暂不下单',
-        success: (r) => resolve(r.confirm),
-      });
-    });
-  },
-
   // -------------------- 底部按钮 --------------------
   onUrgeAudit() {
     my.showToast({ content: '已提醒商家加急审核', type: 'success' });

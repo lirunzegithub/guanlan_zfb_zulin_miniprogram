@@ -7,11 +7,18 @@
   <link rel="stylesheet" href="/manager-assets/app.css" />
   <style>
     #app-fallback {
-      padding: 80px 40px; max-width: 720px; margin: 0 auto;
-      color: #6b7280; font-size: 14px; line-height: 1.6;
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; color: #6b7280; font-size: 13px;
     }
-    #app-fallback h2 { color: #1a1f2e; margin: 0 0 12px; }
+    #app-fallback .spinner {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 3px solid #e5e7eb; border-top-color: #1a1f2e;
+      animation: app-spin .8s linear infinite;
+    }
+    @keyframes app-spin { to { transform: rotate(360deg); } }
     #app-error {
+      position: fixed; left: 20px; right: 20px; bottom: 20px; z-index: 10;
       display: none;
       background: #fff1f1; color: #c0260b;
       padding: 16px 20px; border-left: 4px solid #ff3b30;
@@ -24,13 +31,24 @@
 <body>
   <div id="app">
     <div id="app-fallback">
-      <h2>正在加载管理后台…</h2>
-      <p>若超过几秒未跳转，请打开浏览器控制台查看错误。</p>
+      <div class="spinner"></div>
+      <div>加载中…</div>
       <div id="app-error"></div>
     </div>
   </div>
 
   <script>
+    // 在 SPA 启动前预判登录态：未登录直接定位到 /login，避免先渲染再跳转的闪烁
+    (function () {
+      try {
+        var hasToken = !!localStorage.getItem('manager_token') && !!localStorage.getItem('manager_staff');
+        var h = location.hash || '';
+        if (!hasToken && h.indexOf('#/login') !== 0) {
+          location.hash = '/login';
+        }
+      } catch (e) {}
+    })();
+
     window.__showErr = function (msg) {
       var el = document.getElementById('app-error');
       if (!el) return;

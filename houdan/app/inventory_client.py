@@ -10,7 +10,7 @@ import requests
 from app import settings
 
 # 光影曳动库存系统后台地址（写死，不支持修改）
-INVENTORY_API_BASE = "https://your-inventory-system.example.com"
+INVENTORY_API_BASE = "https://guangying.lirunze.top"
 
 # 状态码：ok / not_configured / not_found / error
 STATUS_OK = "ok"

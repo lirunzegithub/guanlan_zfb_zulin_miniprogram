@@ -98,7 +98,8 @@ class AlipayConfig:
     PRODUCT_CODE        = "PRE_AUTH_ONLINE"
     ENABLE_PAY_CHANNELS = "CREDITZHIMA"
     # SCENE_CODE 实际上是要传给阿里 extra_param.category 的业务类目码，
-    # 在开放平台「信用借还/信用免押」产品后台拿（如 RENT_3C / RENT_DIGITAL / RENT_AUTO ...）。
+    # 合法取值见官方「信用预授权类目」表 https://opendocs.alipay.com/open/10719
+    # （如 RENT_DIGITAL 数码其他 / RENT_PHONE 手机 / RENT_COMPUTER 电脑\平板 ...）。
     # 留空 → 阿里识别不到信用借还业务，会把请求降级为普通预授权页（用户看到「选支付方式」而不是「免押授权页」）。
     SCENE_CODE          = "RENT_DIGITAL"
     # 在支付宝开放平台「信用服务管理」里创建信用借还服务后拿到的 SERVICE_ID，填入自己的。
@@ -124,6 +125,32 @@ class AlipayConfig:
         except Exception:
             pass
         return cls.APP_ID
+
+    @classmethod
+    def service_id(cls) -> str:
+        """信用借还 SERVICE_ID：优先取 settings.json 的 alipay_service_id，
+        没配回落到模块常量。免押 freeze 的 extra_param.serviceId 用它。"""
+        try:
+            from app.settings import get as _setting_get
+            v = (_setting_get("alipay_service_id") or "").strip()
+            if v:
+                return v
+        except Exception:
+            pass
+        return cls.SERVICE_ID
+
+    @classmethod
+    def scene_code(cls) -> str:
+        """信用借还业务类目（→ extra_param.category）：优先取 settings.json 的
+        alipay_scene_code，没配回落到模块常量（默认 RENT_DIGITAL）。"""
+        try:
+            from app.settings import get as _setting_get
+            v = (_setting_get("alipay_scene_code") or "").strip()
+            if v:
+                return v
+        except Exception:
+            pass
+        return cls.SCENE_CODE
 
     @classmethod
     def notify_base(cls) -> str:

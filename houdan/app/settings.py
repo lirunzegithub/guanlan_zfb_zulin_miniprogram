@@ -25,6 +25,13 @@ _DEFAULTS: dict[str, Any] = {
     "ship_free_days":       3,                   # 物流免租期（天）
     "service_phone":        "400-000-0000",      # 客服电话（部署后在管理后台「设置」里改成自己的）
     "alipay_app_id":        "",                  # 支付宝/小程序 APPID（管理后台「设置」里填）
+    # 信用借还 SERVICE_ID：开放平台「信用服务管理」创建信用免押服务后拿到的服务 ID。
+    # 空 = 支付宝识别不到信用借还业务，免押会降级为普通预授权（无免押按钮）。免押必配。
+    "alipay_service_id":    "",
+    # 信用借还业务类目（→ 免押 extra_param.category）：如 RENT_DIGITAL(数码其他) / RENT_PHONE(手机)。
+    # 合法取值见官方「信用预授权类目」表 https://opendocs.alipay.com/open/10719
+    # 有合理默认值，一般无需改；同时经营多类目租赁时才按需切换。
+    "alipay_scene_code":    "RENT_DIGITAL",
     # 公司名称：小程序"我的"底部 + 后台侧栏底部展示，不再硬编码
     "company_name":         "示例数码租赁有限责任公司",
     # 软件 LOGO：后台浏览器标签页 favicon + 左上角品牌图标；小程序"我的"头像。

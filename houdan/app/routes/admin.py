@@ -1126,6 +1126,16 @@ def admin_update_order(oid):
                     f"「{_ORDER_STATUS_LABEL.get(new_status, new_status)}」"
                     f"（如确需强制修改请勾选「强制修改」）",
                 )
+            # 押金仍在冻结且未下发过解冻的订单，禁止在通用流转里直接置为
+            # cancelled——这条路不调支付宝解冻，会把用户押金卡在冻结池直到
+            # 预授权到期。请走 POST /orders/<oid>/admin-cancel（先解冻再取消）。
+            # force 仅用于确认支付宝端已解冻/已过期自动解冻的例外场景。
+            if (new_status == "cancelled" and not body.get("force")
+                    and (o.get("alipay_auth_no") or "").strip()
+                    and not o.get("unfreeze_dispatched_at")):
+                return fail(1, "该订单押金仍在支付宝冻结中，直接改状态不会退押金；"
+                               "请用订单列表的「取消」按钮（会先解冻押金）。"
+                               "若确认支付宝端已解冻，可勾选「强制修改」跳过本保护")
             patch["status"] = new_status
             # 进入 send 后锁库倒计时已无意义，清掉避免列表展示残留
             if new_status in ("send", "recv", "using", "return", "overdue", "done"):
@@ -1174,17 +1184,22 @@ def admin_cancel_approve(oid):
     if o.get("unfreeze_dispatched_at"):
         return fail(1, "已下发过解冻请求，等待支付宝异步通知")
 
-    auth_no = (o.get("alipay_auth_no") or "").strip()
+    # 本地没有授权号时先向支付宝核实（通知不可达/丢失的单，空 ≠ 未冻结）
+    try:
+        auth_no = _resolve_auth_no(o)
+    except Exception as e:
+        return fail(1, f"本地无授权号，向支付宝核实冻结状态失败：{e}"
+                       f"（已中止，避免漏解冻押金），请稍后重试")
     # 实际可解冻 = 冻结池 - 已扣款（refund 不补回，不参与计算）
     amount  = _calc_unfreezable_amount(o)
     remark  = "商家同意用户取消申请，解冻剩余冻结额度"
     now = int(time.time())
 
     if not auth_no:
-        # 历史数据：没有真实授权号，无法调支付宝，直接走本地终态推进
+        # 支付宝确认无此冻结（真未付款/历史数据），本地直接关单
         from app.routes.orders import transition_unfreeze_done
         updated = transition_unfreeze_done(oid)
-        return ok(_order_view(updated or o), "无支付宝授权号，已本地直接关单")
+        return ok(_order_view(updated or o), "支付宝端无冻结记录，已本地直接关单")
 
     if amount <= 0:
         # 冻结池已经被扣款消耗完（alipay 不接受 0 元解冻），本地直接关单
@@ -1195,7 +1210,7 @@ def admin_cancel_approve(oid):
 
     out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
     try:
-        get_client().auth_unfreeze(
+        uf = get_client().auth_unfreeze(
             auth_no=auth_no,
             out_request_no=out_request_no,
             amount=amount,
@@ -1211,7 +1226,89 @@ def admin_cancel_approve(oid):
         "unfreeze_out_request_no": out_request_no,
         "unfreeze_amount":         amount,   # 实际下发的解冻金额，方便后续排查
     })
+    # unfreeze 是同步接口：返回 status=SUCCESS 即解冻已完成，直接推终态。
+    # 异步 notify 只是冗余确认（transition 幂等）；不可达 notify 的环境没有
+    # 这一步会永远卡在"解冻中"。
+    if (uf.get("status") or "").upper() == "SUCCESS":
+        from app.routes.orders import transition_unfreeze_done
+        updated = transition_unfreeze_done(oid) or updated
+        return ok(_order_view(updated), f"已同意取消，押金 ¥{amount:.2f} 已解冻，订单已取消")
     return ok(_order_view(updated), f"已同意，已下发解冻请求 ¥{amount:.2f}，等待支付宝通知")
+
+
+@bp.post("/orders/<oid>/admin-cancel")
+def admin_force_cancel(oid):
+    """后台主动取消订单（未发货等场景），自动解冻用户押金。
+
+    与「同意用户取消申请」(admin_cancel_approve) 同一套保守策略：
+      - 押金已冻结（有 auth_no 且剩余可解冻额 > 0）→ 先下发 alipay 解冻请求、
+        把订单置为 pending_cancel 并打 unfreeze_dispatched_at；真正推进到
+        cancelled（+退优惠券）交给异步 notify 的 transition_unfreeze_done，
+        避免"本地已取消但支付宝解冻失败"的状态错位。
+      - 未冻结押金（audit）/ 无可解冻额（冻结池已被扣款耗尽）→ 本地直接关单并退券。
+
+    区别于通用 PUT /orders/<id> 状态流转（那条不解冻，会把押金卡死到预授权到期）。
+    """
+    from app.alipay_client import get_client
+    from app.routes.orders import _refund_coupon_if_any
+    o = order_repo.get(oid)
+    if not o:
+        return fail(404, "订单不存在")
+
+    status = o.get("status") or ""
+    if status in ("cancelled", "done"):
+        return fail(1, f"订单已是终态「{_ORDER_STATUS_LABEL.get(status, status)}」，无需取消")
+    if status == "pending_cancel" or o.get("unfreeze_dispatched_at"):
+        return fail(1, "订单已在取消/解冻处理中，等待支付宝异步通知")
+
+    now = int(time.time())
+    # 本地没有授权号时先向支付宝核实（通知不可达/丢失的单，空 ≠ 未冻结；
+    # 直接按"未冻结"关单会把押金留在支付宝冻结池直到预授权到期）
+    try:
+        auth_no = _resolve_auth_no(o)
+    except Exception as e:
+        return fail(1, f"向支付宝核实押金冻结状态失败：{e}"
+                       f"（已中止取消，避免漏解冻押金），请稍后重试")
+    amount = _calc_unfreezable_amount(o)
+
+    # 支付宝端确认未冻结、或无可解冻额：本地直接关单（alipay 不接受 0 元解冻）
+    if not auth_no or amount <= 0:
+        updated = update_order(oid, {
+            "status": "cancelled",
+            "cancelled_at": now,
+            "cancelled_by": "admin_force",
+        }, sync_reason="admin_force_cancel")
+        _refund_coupon_if_any(o)
+        why = "支付宝端无冻结记录" if not auth_no else "无可解冻金额（冻结额已被扣款耗尽）"
+        return ok(_order_view(updated), f"（{why}）已直接取消")
+
+    # 有冻结额：下发解冻，转 pending_cancel
+    out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
+    try:
+        uf = get_client().auth_unfreeze(
+            auth_no=auth_no,
+            out_request_no=out_request_no,
+            amount=amount,
+            remark="商家主动取消订单，解冻用户押金",
+        )
+    except Exception as e:
+        return fail(1, f"调用 alipay 解冻失败：{e}")
+
+    updated = update_order(oid, {
+        "status": "pending_cancel",
+        "cancel_approved_at": now,
+        "unfreeze_dispatched_at": now,
+        "unfreeze_out_request_no": out_request_no,
+        "unfreeze_amount": amount,
+        "cancelled_by": "admin_force",
+    }, sync_reason="admin_force_cancel")
+    # unfreeze 同步返回 SUCCESS 即解冻完成，直接推终态；notify 作冗余确认（幂等）
+    if (uf.get("status") or "").upper() == "SUCCESS":
+        from app.routes.orders import transition_unfreeze_done
+        updated = transition_unfreeze_done(oid) or updated
+        return ok(_order_view(updated), f"押金 ¥{amount:.2f} 已解冻，订单已取消")
+    return ok(_order_view(updated),
+              f"已下发解冻请求 ¥{amount:.2f}，支付宝确认后订单将自动置为已取消")
 
 
 @bp.post("/orders/<oid>/cancel-reject")
@@ -1308,7 +1405,12 @@ def admin_return_approve(oid):
     if o.get("unfreeze_dispatched_at"):
         return fail(1, "已下发过解冻请求，等待支付宝异步通知")
 
-    auth_no = (o.get("alipay_auth_no") or "").strip()
+    # 本地没有授权号时先向支付宝核实（通知不可达/丢失的单，空 ≠ 未冻结）
+    try:
+        auth_no = _resolve_auth_no(o)
+    except Exception as e:
+        return fail(1, f"本地无授权号，向支付宝核实冻结状态失败：{e}"
+                       f"（已中止，避免漏解冻押金），请稍后重试")
     amount  = _calc_unfreezable_amount(o)
     remark  = "商家核验通过，解冻剩余冻结额度"
     now = int(time.time())
@@ -1316,7 +1418,7 @@ def admin_return_approve(oid):
     if not auth_no:
         from app.routes.orders import transition_unfreeze_done
         updated = transition_unfreeze_done(oid)
-        return ok(_order_view(updated or o), "无支付宝授权号，已本地直接关单")
+        return ok(_order_view(updated or o), "支付宝端无冻结记录，已本地直接关单")
 
     if amount <= 0:
         from app.routes.orders import transition_unfreeze_done
@@ -1326,7 +1428,7 @@ def admin_return_approve(oid):
 
     out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
     try:
-        get_client().auth_unfreeze(
+        uf = get_client().auth_unfreeze(
             auth_no=auth_no,
             out_request_no=out_request_no,
             amount=amount,
@@ -1342,6 +1444,11 @@ def admin_return_approve(oid):
         "unfreeze_out_request_no": out_request_no,
         "unfreeze_amount":         amount,
     })
+    # unfreeze 同步返回 SUCCESS 即解冻完成，直接推终态；notify 作冗余确认（幂等）
+    if (uf.get("status") or "").upper() == "SUCCESS":
+        from app.routes.orders import transition_unfreeze_done
+        updated = transition_unfreeze_done(oid) or updated
+        return ok(_order_view(updated), f"已核验通过，押金 ¥{amount:.2f} 已解冻，订单已完成")
     return ok(_order_view(updated), f"已核验通过，已下发解冻请求 ¥{amount:.2f}，等待支付宝通知")
 
 
@@ -1904,6 +2011,22 @@ def admin_update_settings():
     return ok(merged, "已保存")
 
 
+@bp.get("/settings/alipay-selfcheck")
+def admin_alipay_selfcheck():
+    """支付宝密钥/凭据自检（公钥模式）。仅只读诊断，不改配置、不产生资金动作。
+    ?probe=0 可跳过联网探针，只跑本地离线检查（默认执行联网探针）。
+    """
+    if g.staff.get("role") != "admin":
+        return fail(403, "仅 admin 可执行支付宝自检")
+    from app.alipay_selfcheck import run_selfcheck
+    probe = (request.args.get("probe", "1") or "1").strip().lower() not in ("0", "false", "no")
+    try:
+        result = run_selfcheck(probe=probe)
+    except Exception as e:
+        return fail(1, f"自检执行异常：{e}")
+    return ok(result)
+
+
 # =========================== 预授权扣款（信用免押方案 A） =========================== #
 # 接口：
 #   POST /api/admin/orders/<oid>/charges       发起一笔扣款（alipay.trade.pay）
@@ -1968,6 +2091,35 @@ def _is_refundable_status(s: str) -> bool:
 # 哪些扣款实际消耗了 alipay 端的冻结池
 # trade.refund 不会回填冻结池（alipay 设计），所以这里不去减退款
 _CONSUMED_TRADE_STATUS = frozenset({"TRADE_SUCCESS", "TRADE_FINISHED"})
+
+
+def _resolve_auth_no(order: dict) -> str:
+    """取订单的支付宝授权号；本地为空时现场向支付宝核实一次。
+
+    授权号的常规写入点是 freeze 异步通知和 /credit/query 主动查询，两者都可能
+    缺席（通知不可达的本地联调环境、通知丢失、用户付完款没回小程序）。
+    本地为空 ≠ 未冻结，直接按"未冻结"关单会把押金留在支付宝冻结池。
+
+    返回：
+      - 非空 auth_no  → 押金确实冻着（顺手补落库），照常走解冻
+      - ""            → 支付宝明确答复无此冻结（真未付款/历史数据），可安全本地关单
+    抛异常 → 查询本身失败（网络/配置），调用方应中止操作让管理员重试，
+             而不是静默关单。
+    """
+    auth_no = (order.get("alipay_auth_no") or "").strip()
+    if auth_no:
+        return auth_no
+    from app.alipay_client import get_client
+    oid = order.get("id") or ""
+    # 查询要用"当前生效"的授权订单号 + 配对 out_request_no（重试后带 _A2 后缀），
+    # 与 /credit/query 的取法保持一致
+    active_oon   = (order.get("alipay_out_order_no") or oid).strip()
+    active_reqno = (order.get("alipay_out_request_no") or "").strip()
+    q = get_client().auth_order_query(active_oon, out_request_no=active_reqno or None)
+    auth_no = (q.get("auth_no") or "").strip()
+    if auth_no:
+        order_repo.update(oid, {"alipay_auth_no": auth_no})
+    return auth_no
 
 
 def _calc_unfreezable_amount(order: dict) -> float:
@@ -2113,7 +2265,7 @@ def admin_create_charge(oid):
             product_name=product_name_for_card or None,
             product_image_url=product_image_url or None,
             body=reason_detail or None,
-            service_id=AlipayConfig.SERVICE_ID or None,
+            service_id=AlipayConfig.service_id() or None,
         )
     except Exception as e:
         trade_repo.update(out_trade_no, {

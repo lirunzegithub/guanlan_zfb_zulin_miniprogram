@@ -570,7 +570,9 @@ def transition_unfreeze_done(out_order_no: str) -> dict | None:
         updated = update_order(oid, {
             "status":       "cancelled",
             "cancelled_at": int(time.time()),
-            "cancelled_by": "admin_approve",
+            # 后台强制取消（admin_force）在下发解冻时已写 cancelled_by，不覆盖；
+            # 用户申请-商家同意的链路没写过，落默认 admin_approve
+            "cancelled_by": o.get("cancelled_by") or "admin_approve",
         }, sync_reason="admin_cancel_approve")
         _refund_coupon_if_any(o)
         return updated

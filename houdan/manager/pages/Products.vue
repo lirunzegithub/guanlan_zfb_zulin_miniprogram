@@ -253,98 +253,6 @@
           </div>
           <div class="muted" style="margin-top:6px">支持多选；左右箭头调整顺序；× 移除。</div>
         </div>
-        <!-- 定损标准（damage_standard）：分组 + 多行（程度/折旧/安心保） -->
-        <div class="field">
-          <div class="label">
-            定损标准
-            <label class="ds-toggle">
-              <input type="checkbox" v-model="dsEnabled" />
-              <span>启用</span>
-            </label>
-            <button type="button" class="btn btn-sm ds-fill" @click="fillDamageDefault">填入默认模板</button>
-          </div>
-          <div class="muted" style="margin-bottom:8px">详情页会在「商品介绍」上方渲染一张定损表。可按需调整分组、行项与底部提示。</div>
-          <template v-if="dsEnabled">
-            <div class="row" style="gap:12px">
-              <div class="field" style="flex:1; margin:0">
-                <div class="label">表标题</div>
-                <input class="input" v-model="form.damage_standard.title" placeholder="定损标准" />
-              </div>
-            </div>
-            <div class="row" style="gap:12px; margin-top:8px">
-              <div class="field" style="flex:1; margin:0">
-                <div class="label">列名 · 类型</div>
-                <input class="input" v-model="form.damage_standard.headers.type" placeholder="磨损类型" />
-              </div>
-              <div class="field" style="flex:1; margin:0">
-                <div class="label">列名 · 程度</div>
-                <input class="input" v-model="form.damage_standard.headers.degree" placeholder="磨损程度" />
-              </div>
-              <div class="field" style="flex:1; margin:0">
-                <div class="label">列名 · 折旧</div>
-                <input class="input" v-model="form.damage_standard.headers.depreciation" placeholder="折旧标准" />
-              </div>
-              <div class="field" style="flex:1; margin:0">
-                <div class="label">列名 · 安心保</div>
-                <input class="input" v-model="form.damage_standard.headers.insurance" placeholder="安心保标准" />
-              </div>
-            </div>
-
-            <div v-for="(g, gi) in (form.damage_standard.groups || [])" :key="gi" class="ds-group">
-              <div class="ds-group-head">
-                <input
-                  class="input ds-type-input"
-                  v-model="g.type"
-                  placeholder="例如：机身或部件穿孔缺口"
-                />
-                <button type="button" class="btn-link danger" @click="removeDsGroup(gi)">删除分组</button>
-              </div>
-              <table class="ds-rows-table">
-                <thead>
-                  <tr>
-                    <th style="width:35%">磨损程度</th>
-                    <th style="width:25%">折旧标准</th>
-                    <th style="width:25%">安心保标准</th>
-                    <th style="width:90px">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(r, ri) in (g.rows || [])" :key="ri">
-                    <td><input class="input" v-model="r.degree" placeholder="<1mm" /></td>
-                    <td>
-                      <input class="input" v-model="r.depreciation" placeholder="押金10%" />
-                      <label class="ds-hl">
-                        <input type="checkbox" v-model="r.depreciation_highlight" />
-                        <span>红色高亮</span>
-                      </label>
-                    </td>
-                    <td>
-                      <input class="input" v-model="r.insurance" placeholder="押金3%" />
-                      <label class="ds-hl">
-                        <input type="checkbox" v-model="r.insurance_highlight" />
-                        <span>红色高亮</span>
-                      </label>
-                    </td>
-                    <td>
-                      <button type="button" class="btn-link danger" @click="removeDsRow(gi, ri)">删除</button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <button type="button" class="btn btn-sm" @click="addDsRow(gi)">＋ 增加一行</button>
-            </div>
-            <button type="button" class="btn btn-sm" @click="addDsGroup" style="margin-top:8px">＋ 增加分组</button>
-
-            <div class="field" style="margin-top:12px">
-              <div class="label">底部提示文案</div>
-              <textarea
-                class="textarea"
-                v-model="form.damage_standard.notice"
-                placeholder="若设备丢失，安心保服务不予保障，需全额买下。安心保只保主机，不保配件"
-              ></textarea>
-            </div>
-          </template>
-        </div>
 
         <div class="field">
           <div class="label">顶部红色提示 tip</div>
@@ -425,84 +333,6 @@ const _toBg = (s) => _isUrlLike(s)
   ? `url("${s}") center/cover no-repeat`
   : (s || '');
 
-// 默认定损标准：取自截图里的「大疆 Pocket3」示例；用作 admin 一键填入起点。
-const _DEFAULT_DAMAGE_STANDARD = () => ({
-  enabled: true,
-  title: '定损标准',
-  headers: { type: '磨损类型', degree: '磨损程度', depreciation: '折旧标准', insurance: '安心保标准' },
-  groups: [
-    {
-      type: '机身或部件穿孔缺口',
-      rows: [
-        { degree: '<1mm', depreciation: '押金10%', insurance: '押金3%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥1mm、<3mm', depreciation: '押金30%', insurance: '押金10%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥3mm', depreciation: '全额买下', insurance: '押金30%', depreciation_highlight: true, insurance_highlight: false },
-      ],
-    },
-    {
-      type: '机身/屏幕或镜头划痕掉漆',
-      rows: [
-        { degree: '<2mm', depreciation: '押金3%', insurance: '押金1%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥2mm、<10mm', depreciation: '押金8%', insurance: '押金2.4%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥10mm、<30mm', depreciation: '押金15%', insurance: '押金4.5%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥30mm', depreciation: '押金20%', insurance: '押金6%', depreciation_highlight: false, insurance_highlight: false },
-      ],
-    },
-    {
-      type: '机身/屏幕或镜头出现磕碰磨损变形刮伤',
-      rows: [
-        { degree: '<1mm', depreciation: '押金3%', insurance: '押金1%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥1mm、<3mm', depreciation: '押金8%', insurance: '押金2.4%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥3mm、<5mm', depreciation: '押金15%', insurance: '押金4.5%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥5mm、<10mm', depreciation: '押金20%', insurance: '押金6%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '外壳出现<5mm裂痕', depreciation: '押金20%', insurance: '押金6%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥10mm、<20mm', depreciation: '押金25%', insurance: '押金7.5%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '外壳出现<10mm裂痕', depreciation: '押金25%', insurance: '押金7.5%', depreciation_highlight: false, insurance_highlight: false },
-        { degree: '≥20mm凹痕、≥10mm裂痕', depreciation: '全额买下', insurance: '押金30%', depreciation_highlight: true, insurance_highlight: false },
-      ],
-    },
-  ],
-  notice: '若设备丢失，安心保服务不予保障，需全额买下。安心保只保主机，不保配件',
-});
-
-// 给 form 兜底一个空 ds 结构，避免 v-model 时 undefined 报错
-const _emptyDamageStandard = () => ({
-  enabled: false,
-  title: '定损标准',
-  headers: { type: '磨损类型', degree: '磨损程度', depreciation: '折旧标准', insurance: '安心保标准' },
-  groups: [],
-  notice: '',
-});
-
-// 把后台拿回来的 damage_standard（可能是空 / 缺字段 / 老结构）规范化到编辑器可用形态
-const _normalizeDamageStandard = (raw) => {
-  const base = _emptyDamageStandard();
-  if (!raw || typeof raw !== 'object') return base;
-  const headers = (raw.headers && typeof raw.headers === 'object') ? raw.headers : {};
-  const groups = Array.isArray(raw.groups) ? raw.groups : [];
-  return {
-    enabled: raw.enabled !== false && (!!groups.length || raw.enabled === true),
-    title: raw.title || '定损标准',
-    headers: {
-      type: headers.type || '磨损类型',
-      degree: headers.degree || '磨损程度',
-      depreciation: headers.depreciation || '折旧标准',
-      insurance: headers.insurance || '安心保标准',
-    },
-    groups: groups.map(g => ({
-      type: (g && g.type) || '',
-      rows: Array.isArray(g && g.rows) ? g.rows.map(r => ({
-        degree: (r && r.degree) || '',
-        depreciation: (r && r.depreciation) || '',
-        insurance: (r && r.insurance) || '',
-        depreciation_highlight: !!(r && r.depreciation_highlight),
-        insurance_highlight: !!(r && r.insurance_highlight),
-      })) : [],
-    })),
-    notice: (raw && raw.notice) || '',
-  };
-};
-
 export default {
   setup() {
     const api = inject('api');
@@ -516,8 +346,6 @@ export default {
     const saving = ref(false);
     const coversUploading = ref(false);
     const shotsUploading = ref(false);
-    // 定损标准启用开关：与 form.damage_standard.enabled 双向同步
-    const dsEnabled = ref(false);
 
     const filtered = computed(() => {
       let arr = list.value;
@@ -692,9 +520,7 @@ export default {
         service_id: '', status: 'on',
         real_shots: [],
         price_tiers: [{ from: 1, price: 20 }],
-        damage_standard: _emptyDamageStandard(),
       };
-      dsEnabled.value = false;
       tierError.value = '';
       resetQr();          // 新建商品还没 id，分享区不可用
       modal.value = true;
@@ -708,15 +534,13 @@ export default {
       const covers = Array.isArray(p.covers) && p.covers.length
         ? p.covers.slice()
         : (p.cover_url ? [p.cover_url] : []);
-      const ds = _normalizeDamageStandard(p.damage_standard);
       form.value = {
+        // damage_standard 已无后台编辑入口，随 ...p 原样透传，保存时不动既有数据
         ...p,
         covers,
         real_shots: Array.isArray(p.real_shots) ? p.real_shots.slice() : [],
         price_tiers: tiers,
-        damage_standard: ds,
       };
-      dsEnabled.value = !!ds.enabled;
       // 旧数据可能还残留这些字段；不让它们随保存请求回传给后端。
       delete form.value.price;
       delete form.value.promo_label;
@@ -727,45 +551,6 @@ export default {
       modal.value = true;
       // 打开已有商品时自动生成"默认（无租期）"小程序码
       genQrcode(0);
-    };
-
-    // ---- 定损标准编辑 ----
-    const addDsGroup = () => {
-      const ds = form.value.damage_standard || _emptyDamageStandard();
-      ds.groups = (ds.groups || []).concat([{
-        type: '',
-        rows: [{ degree: '', depreciation: '', insurance: '', depreciation_highlight: false, insurance_highlight: false }],
-      }]);
-      form.value.damage_standard = ds;
-    };
-    const removeDsGroup = (gi) => {
-      const ds = form.value.damage_standard;
-      if (!ds || !Array.isArray(ds.groups)) return;
-      if (!confirm('确认删除该分组？')) return;
-      ds.groups.splice(gi, 1);
-    };
-    const addDsRow = (gi) => {
-      const g = form.value.damage_standard?.groups?.[gi];
-      if (!g) return;
-      g.rows = (g.rows || []).concat([{
-        degree: '', depreciation: '', insurance: '',
-        depreciation_highlight: false, insurance_highlight: false,
-      }]);
-    };
-    const removeDsRow = (gi, ri) => {
-      const g = form.value.damage_standard?.groups?.[gi];
-      if (!g || !Array.isArray(g.rows)) return;
-      g.rows.splice(ri, 1);
-    };
-    const fillDamageDefault = () => {
-      if (form.value.damage_standard
-          && Array.isArray(form.value.damage_standard.groups)
-          && form.value.damage_standard.groups.length
-          && !confirm('当前已有配置，确认覆盖为默认模板？')) {
-        return;
-      }
-      form.value.damage_standard = _DEFAULT_DAMAGE_STANDARD();
-      dsEnabled.value = true;
     };
 
     // ---- 分段租金编辑 ----
@@ -822,10 +607,6 @@ export default {
       }
       const err = validateTiers(form.value.price_tiers);
       if (err) { tierError.value = err; alert('价格分段配置无效：' + err); return; }
-      // 同步 dsEnabled → damage_standard.enabled；关闭时不丢配置，保留以便再次开启
-      if (form.value.damage_standard) {
-        form.value.damage_standard.enabled = dsEnabled.value;
-      }
       saving.value = true;
       try {
         if (form.value.id) await api.update('products', form.value.id, form.value);
@@ -854,7 +635,6 @@ export default {
       onShotsPick, moveShot, removeShot,
       openNew, openEdit, save, remove,
       tierError, onTierFromInput, onTierPriceInput, addTier, removeTier,
-      dsEnabled, addDsGroup, removeDsGroup, addDsRow, removeDsRow, fillDamageDefault,
     };
   }
 };
@@ -926,53 +706,6 @@ export default {
   color: #e94545;
   font-size: 12px;
 }
-
-/* 定损标准编辑器 */
-.ds-toggle {
-  display: inline-flex; align-items: center; gap: 4px;
-  margin-left: 12px;
-  font-size: 12px;
-  font-weight: 400;
-  color: #4a5060;
-}
-.ds-toggle input { margin: 0; }
-.ds-fill {
-  margin-left: 12px;
-}
-.ds-group {
-  border: 1px solid #e6e9f0;
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-top: 10px;
-  background: #fafbfd;
-}
-.ds-group-head {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 8px;
-}
-.ds-type-input {
-  flex: 1;
-}
-.ds-rows-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 8px;
-}
-.ds-rows-table th,
-.ds-rows-table td {
-  padding: 6px 6px;
-  border-bottom: 1px solid #eef0f4;
-  font-size: 12px;
-  vertical-align: top;
-}
-.ds-rows-table input.input { width: 100%; }
-.ds-hl {
-  display: inline-flex; align-items: center; gap: 4px;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #6b7280;
-}
-.ds-hl input { margin: 0; }
 
 /* ---------- 列表：搜索框 / 移动端卡片 ---------- */
 .kw-input { width: 200px; }

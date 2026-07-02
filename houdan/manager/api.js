@@ -73,6 +73,8 @@ export const api = {
   // 用户取消申请审核（pending_cancel 状态专用）
   approveOrderCancel: (oid) => http.post(`/orders/${oid}/cancel-approve`),
   rejectOrderCancel:  (oid, reason = '') => http.post(`/orders/${oid}/cancel-reject`, { reason }),
+  // 后台主动取消订单（未发货等场景）：自动解冻用户押金
+  adminForceCancel:   (oid) => http.post(`/orders/${oid}/admin-cancel`),
   // 用户归还核验（return_inspecting 状态专用）
   approveOrderReturn: (oid) => http.post(`/orders/${oid}/return-approve`),
   rejectOrderReturn:  (oid, reason = '') => http.post(`/orders/${oid}/return-reject`, { reason }),
@@ -106,6 +108,10 @@ export const api = {
   // 系统设置（settings.json）
   getSettings:    () => http.get('/settings'),
   updateSettings: (patch) => http.put('/settings', patch),
+
+  // 支付宝密钥/凭据自检（公钥模式，只读诊断）。probe=false 只跑本地离线检查
+  alipaySelfcheck: (probe = true) =>
+    http.get('/settings/alipay-selfcheck', { params: { probe: probe ? 1 : 0 } }),
 
   // 工作人员密码
   changePassword: (sid, oldPw, newPw) =>

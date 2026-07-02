@@ -178,7 +178,7 @@ def credit_sign():
     body = request.get_json(silent=True) or {}
     # 是否够格签约由芝麻信用在支付宝端判定，商户拿不到也不需要本地分数。
     product_code = (body.get("product_code") or AlipayConfig.PRODUCT_CODE or "").strip()
-    category     = (body.get("category") or AlipayConfig.SERVICE_ID or "").strip()
+    category     = (body.get("category") or AlipayConfig.service_id() or "").strip()
     if not product_code or not category:
         return fail(10003, "芝麻履约产品未配置（缺 product_code / category）")
 
@@ -247,7 +247,7 @@ def credit_freeze():
     print(
         f"[alipay-freeze] out_order_no={out_order_no} amount={amount} "
         f"enable_pay_channels={enable_pay_channels} "
-        f"service_id={AlipayConfig.SERVICE_ID} category={AlipayConfig.SCENE_CODE} "
+        f"service_id={AlipayConfig.service_id()} category={AlipayConfig.scene_code()} "
         f"product_code={AlipayConfig.PRODUCT_CODE}",
         file=sys.stderr, flush=True,
     )
@@ -282,7 +282,7 @@ def credit_freeze():
     except Exception:
         pass  # 落库失败不影响 freeze 主流程
 
-    res["service_id"] = AlipayConfig.SERVICE_ID or ""
+    res["service_id"] = AlipayConfig.service_id() or ""
     return ok(res, "freeze 已下发")
 
 
@@ -309,6 +309,12 @@ def credit_query():
     # payment_method 由阿里在用户实际付款后返回：CREDITZHIMA=芝麻信用免押 / BALANCE=余额 / ...
     # 由此判断走的是免押还是押金（替代旧的本地 flow 字段）
     res["is_credit"] = (res.get("payment_method") or "").upper() == "CREDITZHIMA"
+
+    # 主动查询是异步 notify 的兜底，查到的 auth_no 必须同样落库：
+    # 授权号若只靠 freeze 通知写入，通知不可达（本地联调）或丢失时订单会一直
+    # 没有授权号，后续取消/归还会被误判成"未冻结押金"而漏发解冻。
+    if _order and res.get("auth_no") and not (_order.get("alipay_auth_no") or "").strip():
+        order_repo.update(order_id, {"alipay_auth_no": res["auth_no"]})
 
     if (res.get("status") == "FROZEN") or res.get("found"):
         from app.routes.orders import transition_freeze_done

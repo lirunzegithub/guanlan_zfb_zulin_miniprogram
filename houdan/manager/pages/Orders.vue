@@ -1508,11 +1508,29 @@ export default {
     };
 
     const quickTransition = async (o, act) => {
+      // 「取消」单独走带解冻的专用接口：直接改状态到 cancelled 不会解冻押金，
+      // 会把用户预授权冻结额一直卡到到期，故必须走 admin-cancel。
+      if (act.to === 'cancelled') return forceCancel(o);
       if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？`)) return;
       try {
         await api.update('orders', o.id, { status: act.to });
         await fetch();
       } catch (e) { alert(e.message || '操作失败'); }
+    };
+
+    // 后台主动取消订单：先弹窗确认（会解冻客户押金），再调 admin-cancel。
+    const forceCancel = async (o) => {
+      const frozen = Number(o.freeze_amount || o.deposit_freeze || 0);
+      const amountLine = frozen > 0 ? `\n本单已冻结押金约 ¥${frozen.toFixed(2)}，取消后将下发解冻。` : '';
+      if (!confirm(
+        `⚠️ 取消订单 ${o.id}\n\n` +
+        `取消会解冻客户押金，请务必确认该订单尚未发货 / 已收回货物后再操作！${amountLine}\n\n` +
+        `确认继续取消并解冻押金？`
+      )) return;
+      try {
+        await api.adminForceCancel(o.id);
+        await fetch();
+      } catch (e) { alert(e.message || '取消失败'); }
     };
 
     // pending_cancel 专用：同意取消（调 unfreeze 解冻）/ 驳回（回 send）
