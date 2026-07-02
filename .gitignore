@@ -33,3 +33,6 @@ houdan/static/products/uploads/
 qianduan/node_modules/
 qianduan/.tea/
 qianduan/.idea/
+
+# ===== 本地素材（不上传） =====
+宣传视频/
