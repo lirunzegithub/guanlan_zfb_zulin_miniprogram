@@ -58,6 +58,11 @@ _DEFAULTS: dict[str, Any] = {
     "inventory_api_token": "",
     # 发货时"货号"是否必填：False = 选填（默认），True = 必填
     "ship_huohao_required": False,
+    # 待免押订单超时自动取消（死单清理）：
+    #   True  = 下单后 24 小时仍未完成免押/付押金的订单自动取消（默认）
+    #   False = 不自动取消，订单一直停留在"待免押"，用户随时可回来继续支付
+    # 注：取消前会先向支付宝对账，已付款/已冻结的订单会推进为待发货而不是被取消。
+    "auto_cancel_stale_audit": True,
 }
 
 

@@ -98,6 +98,7 @@ def create_app():
     app.register_blueprint(alipay_bp,     url_prefix="/api/alipay")
     app.register_blueprint(landing_bp,    url_prefix="/product")
     app.register_blueprint(manager_view_bp,   url_prefix="/manager")
+    app.register_blueprint(manager_view_bp,   url_prefix="/manage", name="manager_view_m")
     app.register_blueprint(manager_static_bp, url_prefix="/manager-assets")
     app.register_blueprint(admin_bp,          url_prefix="/api/admin")
     app.register_blueprint(comments_bp,       url_prefix="/api/comments")

@@ -70,18 +70,27 @@ def _guard():
 
 @bp.post("/auth/login")
 def auth_login():
+    from app import login_guard
     body = request.get_json(silent=True) or {}
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     if not username or not password:
         return fail(1, "请输入用户名和密码")
 
+    ip = login_guard.client_ip(request)
+    allowed, reason = login_guard.check(username, ip)
+    if not allowed:
+        return fail(1, reason)
+
     s = staff_repo.find(username=username)
     if not s:
+        login_guard.record_failure(username, ip)
         return fail(1, "用户名或密码错误")
     if not verify_password(password, s.get("password_hash", "")):
+        login_guard.record_failure(username, ip)
         return fail(1, "用户名或密码错误")
 
+    login_guard.record_success(username)
     staff_repo.update(s["id"], {"last_login_at": int(time.time())})
     token = auth_token.login(s["id"])
     return ok({

@@ -3,7 +3,9 @@
 当前两个任务：
   tick_advance_lease         每小时扫描 recv 状态订单，物流期已过的自动 recv → using
                              并同步到支付宝订单中心（IN_DELIVERY → IN_THE_LEASE）
-  tick_cancel_stale_audit    每分钟扫 audit 状态订单，超 60s 未完成免押的自动取消
+  tick_cancel_stale_audit    定期扫 audit 状态订单，超 24h 仍未完成免押/付押金的
+                             清理掉（可在后台设置关闭；取消前先向支付宝对账，
+                             已冻结成功的推进为待发货而不是取消）
 
 为什么不用 apscheduler：
   Werkzeug debug=True 的重载机制会让 BackgroundScheduler 出现行为微妙的 race
@@ -29,12 +31,14 @@ _stop_event = threading.Event()
 # 兼容老代码引用（已废弃）；外部读到非 None 即认为"调度已启"
 _scheduler = None
 
-# audit 状态超过此秒数仍未完成免押 → 自动取消
-# 设计依据：正常下单是"创建→免押弹窗→成功"一气呵成（几十秒级别）。
-# 用户中途退出/失败，再回来重发 freeze 会因 out_order_no 冲突报错——
-# 与其修复重试，不如让 audit 短时超时即取消，引导用户重新下单。
-# 注：scheduler 每分钟扫一次，所以实际取消时间在 60–120 秒之间（最差差一个 tick）。
-AUDIT_TIMEOUT_SECONDS = 1 * 60
+# audit 状态超过此秒数仍未完成免押/付押金 → 自动取消（死单清理）。
+# 历史：这里曾是 60 秒——当年 out_order_no 唯一性限制导致中途退出无法重试，
+# 只能"短超时取消引导重新下单"。冻结续号（_A2/_A3…）落地后重试已经可用，
+# audit 变成可停留、可从订单页继续支付的正常状态，超时取消随之降级为
+# 长周期死单清理（商品可能下架/调价，不宜无限期保留未支付订单）。
+# 开关：settings.auto_cancel_stale_audit（后台设置页可关，默认开）。
+# 取消前先向支付宝对账，已冻结成功的推进为待发货，杜绝"已付款订单被取消"。
+AUDIT_TIMEOUT_SECONDS = 24 * 3600
 
 
 def _ship_days_for(order: dict) -> int:
@@ -52,18 +56,54 @@ def _ship_days_for(order: dict) -> int:
     return 3
 
 
-def tick_cancel_stale_audit() -> dict:
-    """扫 status=audit 且创建时间超过 AUDIT_TIMEOUT_SECONDS 的订单，自动取消。
+def _reconcile_stale_audit(order: dict) -> str:
+    """取消前向支付宝核实 audit 订单的冻结状态（用户可能已付款但通知丢失/未达）。
 
-    audit→cancelled 走 update_order 拦截器，会自动 sync 支付宝订单中心
-    （DEPOSIT_WAIVER → CLOSED）。优惠券同步退回。
+    返回：
+      "frozen"  已冻结成功，已推进 audit→send（补落 auth_no），不能取消
+      "none"    支付宝确认无冻结，可安全取消
+      "unknown" 查询失败，本轮跳过，下轮重试
+    """
+    from app.routes.alipay import query_active_freeze, is_frozen
+    oid = order.get("id") or ""
+    try:
+        res = query_active_freeze(order)
+    except Exception as e:
+        logger.warning("tick_cancel_stale_audit reconcile %s query failed: %s", oid, e)
+        return "unknown"
+    if not is_frozen(res):
+        return "none"
+    from app.storage.repos import order_repo
+    from app.routes.orders import transition_freeze_done
+    if res.get("auth_no") and not (order.get("alipay_auth_no") or "").strip():
+        order_repo.update(oid, {"alipay_auth_no": res["auth_no"]})
+    transition_freeze_done(oid)
+    logger.warning("tick_cancel_stale_audit: %s 对账发现已冻结成功，推进为待发货（不取消）", oid)
+    return "frozen"
+
+
+def tick_cancel_stale_audit() -> dict:
+    """扫 status=audit 且创建时间超过 AUDIT_TIMEOUT_SECONDS 的订单，清理取消。
+
+    - settings.auto_cancel_stale_audit 关闭时整轮跳过（订单无限期停留在待免押）。
+    - 发起过冻结的订单先对账：已冻结 → 推进待发货；查询失败 → 本轮不动。
+    - audit→cancelled 走 update_order 拦截器，会自动 sync 支付宝订单中心
+      （DEPOSIT_WAIVER → CLOSED）。优惠券同步退回。
     """
     from app.storage.repos import order_repo
     from app.storage.order_ops import update_order
     from app.routes.orders import _refund_coupon_if_any
 
     now = int(time.time())
-    summary = {"scanned": 0, "cancelled": 0, "errors": 0}
+    summary = {"scanned": 0, "cancelled": 0, "advanced": 0, "errors": 0}
+
+    try:
+        from app.settings import get as setting_get
+        if not setting_get("auto_cancel_stale_audit"):
+            return summary  # 后台已关闭自动清理
+    except Exception as e:
+        logger.warning("tick_cancel_stale_audit read settings failed: %s", e)
+        return summary
 
     try:
         candidates = order_repo.list(status="audit")
@@ -71,35 +111,28 @@ def tick_cancel_stale_audit() -> dict:
         logger.warning("tick_cancel_stale_audit list failed: %s", e)
         return summary
 
-    # 临时诊断：每次 tick 必打一条 heartbeat（看 tick 是否真的被调度 + audit 订单的具体状态）
-    # 排查完后可降回 info / 去掉
-    if candidates:
-        ages = sorted(
-            (now - int(o.get("created_at") or 0)) for o in candidates
-            if o.get("created_at")
-        )
-        logger.warning(
-            "tick_cancel_stale_audit heartbeat: %d audit orders, ages(s)=%s, threshold=%ds",
-            len(candidates), ages, AUDIT_TIMEOUT_SECONDS,
-        )
-    else:
-        logger.warning("tick_cancel_stale_audit heartbeat: 0 audit orders")
-
     for o in candidates:
         summary["scanned"] += 1
         oid = o.get("id") or ""
         created_at = int(o.get("created_at") or 0)
         if not oid or not created_at:
-            logger.warning("  skip %s: missing oid or created_at (created_at=%s)", oid, o.get("created_at"))
             continue
         if now - created_at < AUDIT_TIMEOUT_SECONDS:
-            logger.warning("  skip %s: created %ds ago, not yet timeout", oid, now - created_at)
             continue  # 还在容忍期内
 
         try:
             cur = order_repo.get(oid)
             if not cur or cur.get("status") != "audit":
                 continue  # 已被别的 worker / freeze notify 推进了
+            # 取消前对账：只要发起过冻结就先问支付宝，防止取消已付款的订单
+            if int(cur.get("alipay_freeze_attempts") or 0) > 0:
+                verdict = _reconcile_stale_audit(cur)
+                if verdict == "frozen":
+                    summary["advanced"] += 1
+                    continue
+                if verdict == "unknown":
+                    summary["errors"] += 1
+                    continue
             update_order(oid, {
                 "status":       "cancelled",
                 "cancelled_at": now,
@@ -115,7 +148,7 @@ def tick_cancel_stale_audit() -> dict:
             summary["errors"] += 1
             logger.warning("tick_cancel_stale_audit oid=%s err: %s", oid, e)
 
-    if summary["cancelled"] or summary["errors"]:
+    if summary["cancelled"] or summary["advanced"] or summary["errors"]:
         logger.warning("tick_cancel_stale_audit summary: %s", summary)
     return summary
 
@@ -166,8 +199,8 @@ def tick_advance_lease() -> dict:
 
 # ============ 原生 threading 循环 ============
 
-# audit 超时扫描间隔（秒）；改这里可调，但不需要小于 5s（无意义浪费 CPU）
-_AUDIT_TICK_INTERVAL = 30
+# audit 死单清理扫描间隔（秒）；超时阈值是 24h，10 分钟颗粒度足够
+_AUDIT_TICK_INTERVAL = 600
 # 物流期推进扫描间隔（秒）；1 小时颗粒度即可
 _ADVANCE_LEASE_INTERVAL = 3600
 

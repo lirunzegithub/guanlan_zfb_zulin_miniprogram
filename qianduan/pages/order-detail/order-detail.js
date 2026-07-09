@@ -193,6 +193,19 @@ Page({
       else this._stopRentTimer();
       // 并行拉历史扣款记录（拉不到也不阻塞主流程）
       this.loadCharges();
+      // 待免押且发起过冻结的订单：进页面主动向支付宝对账一次。
+      // 用户付完款没等到结果就退出/异步通知丢失时，凭这次 query 就能把订单
+      // 推进到待发货，而不是一直停在"待免押"。只对账一次，避免 loadOrder 循环。
+      if (o.status === 'audit' && Number(o.alipay_freeze_attempts || 0) > 0
+          && !this._auditReconciled) {
+        this._auditReconciled = true;
+        try {
+          const q = await post('/api/alipay/credit/query', { out_order_no: o.id });
+          // await 刷新完再返回：onLoad 的 credit=1 自动拉起支付读取的是刷新后的
+          // 状态，已付款的订单不会再被拉起一次多余的收银台
+          if (q && (q.status === 'FROZEN' || q.found)) await this.loadOrder(o.id);
+        } catch (err) {}
+      }
     } catch (e) {}
   },
 

@@ -168,6 +168,12 @@ order_repo = SqliteRepository(
         #   alipay_out_order_no    = 当前生效的支付宝授权订单号（裸号或带后缀）
         # 旧订单行无这两个字段，读取处一律 .get(k) or 兜底，无需数据迁移。
         "alipay_freeze_attempts": 0, "alipay_out_order_no": "",
+        # 取消撞上冻结成功的自动解冻标记：
+        #   auto_unfreeze_reason   = 触发来源（freeze_after_cancel / query_frozen_after_cancel /
+        #                            user_cancel_frozen），空 = 非自动解冻
+        #   orphan_freeze_alerts   = 非"当前生效号"的授权也冻结成功的告警记录（异常场景，
+        #                            不自动动资金，人工核实后解冻）
+        "auto_unfreeze_reason": "", "orphan_freeze_alerts": [],
     },
     id_type="str",
 )

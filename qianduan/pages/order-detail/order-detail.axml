@@ -333,11 +333,17 @@
   </view>
 
   <!-- 给底部固定 Bar 留位（send 状态有底部"申请取消"按钮） -->
-  <view style="height: {{o.status === 'send' ? 180 : 40}}rpx;"></view>
+  <view style="height: {{(o.status === 'send' || o.status === 'audit') ? 180 : 40}}rpx;"></view>
 
-  <!-- 底部固定 Bar：仅 send 状态显示"申请取消"按钮 -->
+  <!-- 底部固定 Bar：send = 申请取消；audit = 取消 + 继续免押/付押金 -->
   <view a:if="{{o.status === 'send'}}" class="bottom-bar safe-bottom">
     <view class="bb-ghost" onTap="onRequestCancel">申请取消</view>
     <view class="bb-primary disabled">等待商家发货</view>
+  </view>
+  <view a:if="{{o.status === 'audit'}}" class="bottom-bar safe-bottom">
+    <view class="bb-ghost" onTap="onCancel">取消订单</view>
+    <view class="bb-primary {{freezing ? 'disabled' : ''}}" onTap="onCreditFreeze">
+      {{freezing ? '正在拉起支付…' : '去免押 / 支付押金'}}
+    </view>
   </view>
 </view>

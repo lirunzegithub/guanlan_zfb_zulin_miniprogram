@@ -406,7 +406,8 @@ def create_order():
 @bp.post("/<oid>/cancel")
 def cancel(oid):
     """用户自助取消订单。按当前状态分流：
-      audit          → 直接 cancelled（无冻结物，秒退；同步回退优惠券）
+      audit          → cancelled；发起过冻结的先向支付宝对账，已冻结的先解冻再取消
+                       （用户可能付款途中取消，"无冻结物"不再必然成立）
       send           → 提交取消申请 → pending_cancel（待商家审核）
                        商家在后台同意后才会调 unfreeze 真正解冻+取消
       pending_cancel → 已提交过申请，幂等返回
@@ -421,6 +422,24 @@ def cancel(oid):
     now = int(time.time())
 
     if status == "audit":
+        # 对账/解冻失败不阻塞取消：迟到的冻结成功通知会命中 notify 侧
+        # "已取消订单自动解冻"兜底，资金不会悬挂
+        if int(o.get("alipay_freeze_attempts") or 0) > 0:
+            try:
+                from app.routes.alipay import (
+                    query_active_freeze, is_frozen,
+                    dispatch_auto_unfreeze, freeze_pool_amount,
+                )
+                res = query_active_freeze(o)
+                if is_frozen(res):
+                    dispatch_auto_unfreeze(
+                        o,
+                        (res.get("auth_no") or o.get("alipay_auth_no") or "").strip(),
+                        freeze_pool_amount(o, res.get("amount")),
+                        reason="user_cancel_frozen",
+                    )
+            except Exception:
+                pass
         updated = update_order(oid, {"status": "cancelled", "cancelled_at": now},
                                sync_reason="user_cancel")
         _refund_coupon_if_any(o)

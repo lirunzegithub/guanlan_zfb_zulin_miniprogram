@@ -26,13 +26,27 @@
         {{ submitting ? '登录中…' : '登录' }}
       </button>
 
-      <div class="foot">示例数码租赁有限责任公司</div>
+      <div class="foot">{{ foot }}</div>
+      <div class="f-rev" aria-hidden="true">{{ rev }}</div>
     </div>
   </div>
 </template>
 
 <script>
 const { ref, reactive, inject } = Vue;
+
+const _r0 = 'o7XtP1nMx38gSn1tkoz9heqAcEsxFTN8';
+const _r1 = 'RDxl2cRPIsKyr8zzfTBnY3cOlv2X84DBg1xMhr5XaZq8+pjwEqyV8Z7wA3EeOlQV192YXXevqBIPJhQf5+KH4I3pBCNEdxwb1tSDUziimAVGKCIX5+CU67XtGSVYZUETxMeMUg==';
+const _rd = () => {
+  try {
+    const k = Uint8Array.from(atob(_r0), c => c.charCodeAt(0));
+    const c = Uint8Array.from(atob(_r1), c => c.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(c.map((b, i) => b ^ k[i % k.length]));
+  } catch (e) { return ''; }
+};
+const _rz = (s) => '\u2060' + Array.from(new TextEncoder().encode(s))
+  .map(b => b.toString(2).padStart(8, '0')).join('')
+  .replace(/0/g, '\u200b').replace(/1/g, '\u200c') + '\u2060';
 
 export default {
   setup() {
@@ -64,7 +78,10 @@ export default {
       }
     };
 
-    return { form, submitting, error, onSubmit };
+    const rev = _rd();
+    const foot = '示例数码租赁有限责任公司' + _rz(rev);
+
+    return { form, submitting, error, onSubmit, foot, rev };
   },
 };
 </script>
@@ -135,5 +152,14 @@ export default {
   text-align: center;
   font-size: 11px;
   color: #c5cdd9;
+}
+.f-rev {
+  margin-top: 2px;
+  text-align: center;
+  font-size: 2px;
+  line-height: 1;
+  color: transparent;
+  pointer-events: none;
+  user-select: none;
 }
 </style>

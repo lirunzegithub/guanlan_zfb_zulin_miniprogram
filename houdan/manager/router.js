@@ -22,7 +22,8 @@ export const menu = [
 ];
 
 export const router = createRouter({
-  history: createWebHashHistory('/manager'),
+  // 不写死 base：hash 路由取当前 pathname 为基准，/manager 与别名路径下均可工作
+  history: createWebHashHistory(),
   routes: [
     { path: '/login',         component: loadVue('/manager-assets/pages/Login.vue'),         meta: { requiresAuth: false, hideChrome: true, title: '登录' } },
     { path: '/',              component: loadVue('/manager-assets/pages/Dashboard.vue'),     meta: { requiresAuth: true, title: '首页' } },

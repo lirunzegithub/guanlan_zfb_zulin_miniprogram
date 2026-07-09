@@ -12,10 +12,10 @@ const STATUS_TEXT = {
 };
 
 // 按状态决定卡片上的主操作按钮
-// 注：audit（待免押）刻意不提供主操作——免押是下单时一气呵成的，
-// 中途退出/失败的 audit 订单 15 分钟内会被 scheduler 自动取消，无需重试入口
+// audit（待免押）提供"去免押 / 付押金"：用户中途退出后可随时回来继续支付，
+// 后端按已发起次数续号（_A2/_A3…）支持重复拉起收银台
 function actionFor(status) {
-  if (status === 'audit')          return { key: 'detail', label: '查看详情', primary: false };
+  if (status === 'audit')          return { key: 'credit', label: '去免押 / 付押金', primary: true };
   if (status === 'send')           return { key: 'detail', label: '查看物流', primary: false };
   if (status === 'pending_cancel') return { key: 'detail', label: '查看进度', primary: false };
   if (status === 'using')          return { key: 'detail', label: '查看订单', primary: false };
@@ -115,9 +115,13 @@ Page({
     if (!ok) return;
     my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + '&credit=1' });
   },
-  onAction(e) {
+  async onAction(e) {
     const { id, key } = e.currentTarget.dataset;
-    // 所有动作都跳详情页，详情页根据 status 自处理（人脸/免押/物流）
+    // 免押/付押金入口先过实名（与 onCredit 一致），其余动作直接跳详情页自处理
+    if (key === 'credit') {
+      const ok = await requireRealName();
+      if (!ok) return;
+    }
     my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + (key === 'credit' ? '&credit=1' : '') });
   },
 });

@@ -286,6 +286,109 @@ def credit_freeze():
     return ok(res, "freeze 已下发")
 
 
+# =================== 冻结对账 / 自动解冻公共工具 ===================
+# audit 不再是"60 秒即死"的瞬时态（定时取消已改为可开关的 24h 死单清理），
+# 取消与付款成功之间存在天然竞态：用户付款途中订单被取消（用户手动 / 超时清理），
+# 冻结成功的通知随后才到。这组工具保证任何路径下"取消撞上冻结成功"时资金都能
+# 原路退回，而不是静默悬挂在支付宝冻结池里。
+
+
+def query_active_freeze(order: dict) -> dict:
+    """按订单"当前生效"的授权订单号+配对 out_request_no 查询冻结状态。
+    与 /credit/query 的取号逻辑一致；老订单无生效号字段时回退裸订单号。
+    查询失败向上抛异常，由调用方决定阻塞还是放行。
+    """
+    oid = order.get("id") or ""
+    active_oon   = (order.get("alipay_out_order_no") or "").strip() or oid
+    active_reqno = (order.get("alipay_out_request_no") or "").strip()
+    return get_client().auth_order_query(active_oon, out_request_no=active_reqno or None)
+
+
+def is_frozen(res: dict) -> bool:
+    """auth_order_query 结果是否表示"钱冻着"。CLOSED=授权已关闭（已全额解冻），不算。"""
+    if (res.get("status") or "").upper() == "CLOSED":
+        return False
+    return (res.get("status") == "FROZEN") or bool(res.get("found"))
+
+
+def dispatch_auto_unfreeze(order: dict, auth_no: str, amount: float, reason: str) -> bool:
+    """对"已取消却冻结成功"的订单自动下发解冻，资金原路退回用户。
+
+    安全边界（调用方负责保证）：只用于订单已取消/即将取消、且这笔授权确属该订单
+    当前生效授权的场景；活订单的在押押金绝不走这里。
+    解冻本身天然幂等安全：已解冻的授权再发解冻只会被支付宝拒绝，不可能多退。
+
+    返回 True = 解冻请求已下发（或此前已下发过，幂等跳过）。
+    """
+    from app.storage.repos import order_repo
+    oid = order.get("id") or ""
+    if not oid or not auth_no or amount <= 0:
+        print(f"[alipay-auto-unfreeze][ALERT] 订单 {oid} 无法自动解冻："
+              f"auth_no={auth_no!r} amount={amount}，需人工核实",
+              file=sys.stderr, flush=True)
+        return False
+    if order.get("unfreeze_dispatched_at"):
+        return True  # 已有在途/完成的解冻请求，幂等跳过
+    out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
+    try:
+        uf = get_client().auth_unfreeze(
+            auth_no=auth_no,
+            out_request_no=out_request_no,
+            amount=amount,
+            remark="订单已取消，自动解冻押金",
+        )
+    except Exception as e:
+        print(f"[alipay-auto-unfreeze][ALERT] 订单 {oid} 自动解冻失败：{e}，需人工核实",
+              file=sys.stderr, flush=True)
+        return False
+    order_repo.update(oid, {
+        "unfreeze_dispatched_at":  int(time.time()),
+        "unfreeze_out_request_no": out_request_no,
+        "unfreeze_amount":         amount,
+        "auto_unfreeze_reason":    reason,
+    })
+    print(f"[alipay-auto-unfreeze] 订单 {oid} 已自动解冻 ¥{amount:.2f}"
+          f"（reason={reason} status={uf.get('status')}）",
+          file=sys.stderr, flush=True)
+    return True
+
+
+def freeze_pool_amount(order: dict, notified_amount) -> float:
+    """自动解冻金额：优先用支付宝回传的本笔冻结金额，回落订单冻结快照。"""
+    try:
+        v = float(notified_amount or 0)
+        if v > 0:
+            return v
+    except (TypeError, ValueError):
+        pass
+    return float(order.get("freeze_amount") or order.get("deposit_freeze") or 0)
+
+
+def _record_orphan_freeze(order: dict, params: dict) -> None:
+    """同一订单续号重试（_A2/_A3…）后，非"当前生效号"的授权也冻结成功了——
+    出现即说明用户让多个收银台都完成了支付，属于异常场景。
+    不自动动资金（避免误解活订单依赖的押金），落标记 + 高优先级告警，人工核实后解冻。
+    """
+    from app.storage.repos import order_repo
+    oid = order.get("id") or ""
+    alerts = list(order.get("orphan_freeze_alerts") or [])
+    oon = params.get("out_order_no") or ""
+    if any(a.get("out_order_no") == oon for a in alerts):
+        return  # 同一笔孤儿授权只记一次
+    alerts.append({
+        "out_order_no":   oon,
+        "auth_no":        params.get("auth_no") or "",
+        "out_request_no": params.get("out_request_no") or "",
+        "amount":         params.get("amount") or "",
+        "at":             int(time.time()),
+    })
+    order_repo.update(oid, {"orphan_freeze_alerts": alerts})
+    print(f"[alipay-freeze][ALERT] 订单 {oid} 收到非当前生效授权的冻结成功通知 "
+          f"out_order_no={oon} auth_no={params.get('auth_no')} amount={params.get('amount')}，"
+          f"该笔资金不属于任何在途担保，需人工核实后解冻",
+          file=sys.stderr, flush=True)
+
+
 @bp.post("/credit/query")
 def credit_query():
     """查询授权订单状态：alipay.fund.auth.order.query
@@ -316,9 +419,19 @@ def credit_query():
     if _order and res.get("auth_no") and not (_order.get("alipay_auth_no") or "").strip():
         order_repo.update(order_id, {"alipay_auth_no": res["auth_no"]})
 
-    if (res.get("status") == "FROZEN") or res.get("found"):
-        from app.routes.orders import transition_freeze_done
-        transition_freeze_done(order_id)       # 用裸订单号推进状态机
+    if is_frozen(res):
+        if _order and _order.get("status") == "cancelled":
+            # 取消撞上付款成功（用户付款途中取消 / 超时清理竞态）：
+            # 订单已取消但钱冻着，自动解冻原路退回，不再静默悬挂
+            dispatch_auto_unfreeze(
+                _order,
+                (res.get("auth_no") or _order.get("alipay_auth_no") or "").strip(),
+                freeze_pool_amount(_order, res.get("amount")),
+                reason="query_frozen_after_cancel",
+            )
+        else:
+            from app.routes.orders import transition_freeze_done
+            transition_freeze_done(order_id)   # 用裸订单号推进状态机
     return ok(res)
 
 
@@ -402,11 +515,19 @@ def notify_auth_freeze():
     status = params.get("status", "")
     try:
         # 支付宝回传的 out_order_no 可能带重试后缀（_A2…），先还原成本地订单号
-        from app.routes.orders import order_id_from_out_order_no
-        oid = order_id_from_out_order_no(out_order_no)
-        # 把 auth_no / out_request_no 落库到订单上（detail.query 接口需要）
+        from app.routes.orders import order_id_from_out_order_no, transition_freeze_done
         from app.storage.repos import order_repo
-        if order_repo.get(oid):
+        oid = order_id_from_out_order_no(out_order_no)
+        order = order_repo.get(oid)
+
+        # 同一订单可能发起过多次授权（续号 _A2/_A3…），通知必须先验明正身：
+        # 只有"当前生效号"的通知才允许写 auth_no / 推进状态机。孤儿授权的通知
+        # 若覆盖了 auth_no，将来解冻会解错笔，真正押着的那笔永远解不掉。
+        active_oon = ((order.get("alipay_out_order_no") or "").strip() or oid) if order else ""
+        is_active = bool(order) and out_order_no == active_oon
+
+        if is_active:
+            # 把 auth_no / out_request_no 落库到订单上（detail.query 接口需要）
             patch = {}
             if params.get("auth_no"):        patch["alipay_auth_no"] = params["auth_no"]
             if params.get("out_request_no"): patch["alipay_out_request_no"] = params["out_request_no"]
@@ -414,9 +535,19 @@ def notify_auth_freeze():
             if patch:
                 order_repo.update(oid, patch)
 
-        if status in ("SUCCESS", "FROZEN"):
-            from app.routes.orders import transition_freeze_done
-            transition_freeze_done(out_order_no)
+        if status in ("SUCCESS", "FROZEN") and order:
+            if not is_active:
+                _record_orphan_freeze(order, params)
+            elif order.get("status") == "cancelled":
+                # 取消撞上付款成功：订单已取消但这笔押金刚冻结成功，自动解冻退回
+                dispatch_auto_unfreeze(
+                    order,
+                    (params.get("auth_no") or "").strip(),
+                    freeze_pool_amount(order, params.get("amount")),
+                    reason="freeze_after_cancel",
+                )
+            else:
+                transition_freeze_done(out_order_no)  # audit→send；其余状态幂等忽略
         _log_notify("auth_freeze", params, True, True)
         return _NOTIFY_OK
     except Exception as e:

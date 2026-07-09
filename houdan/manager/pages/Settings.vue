@@ -141,6 +141,26 @@
       </div>
 
       <div class="form-field">
+        <label class="form-label">待免押订单超时自动取消</label>
+        <div class="seg-row">
+          <label class="seg">
+            <input type="radio" :value="true" v-model="form.auto_cancel_stale_audit" />
+            <span>开启（默认）</span>
+          </label>
+          <label class="seg">
+            <input type="radio" :value="false" v-model="form.auto_cancel_stale_audit" />
+            <span>关闭</span>
+          </label>
+        </div>
+        <div class="form-hint">
+          下单后 <b>24 小时</b>仍未完成免押/支付押金的订单是否自动取消（死单清理）：<br>
+          ・<b>开启</b>：超时自动取消并退回优惠券；取消前会先向支付宝核实，
+          <b>已付款/已冻结的订单会推进为待发货，不会被误取消</b><br>
+          ・<b>关闭</b>：订单一直停留在「待免押」，用户随时可从订单页继续免押/付押金
+        </div>
+      </div>
+
+      <div class="form-field">
         <label class="form-label">租期日历手动选择</label>
         <div class="seg-row">
           <label class="seg">
@@ -315,6 +335,7 @@ export default {
       alipay_service_id:    '',
       alipay_scene_code:    '',
       freeze_includes_rent: true,
+      auto_cancel_stale_audit: true,
       allow_manual_date_pick: true,
       allow_zero_rent:        false,
       min_price_floor:        20,
