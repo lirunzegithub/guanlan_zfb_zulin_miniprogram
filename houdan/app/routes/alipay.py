@@ -305,10 +305,18 @@ def query_active_freeze(order: dict) -> dict:
 
 
 def is_frozen(res: dict) -> bool:
-    """auth_order_query 结果是否表示"钱冻着"。CLOSED=授权已关闭（已全额解冻），不算。"""
-    if (res.get("status") or "").upper() == "CLOSED":
-        return False
-    return (res.get("status") == "FROZEN") or bool(res.get("found"))
+    """auth_order_query 结果是否表示"钱冻着"。
+
+    detail.query 的授权单状态（order_status）枚举 INIT/AUTHORIZED/FINISH/CLOSED，
+    只有 AUTHORIZED（授权成功、资金冻结中）算冻着：
+      - INIT   = 授权单已创建但用户没完成授权（打开收银台即产生，冻结 ¥0）
+      - FINISH = 冻结额已全部转支付，无剩余冻结
+      - CLOSED = 已全额解冻
+    FROZEN 兼容旧版 order.query 接口的返回。
+    found 只代表"支付宝查得到这笔授权单记录"，与是否冻结成功无关，
+    绝不能参与判断（曾导致无免押额度的用户 INIT 单被误推进待发货）。
+    """
+    return (res.get("status") or "").upper() in ("AUTHORIZED", "FROZEN")
 
 
 def dispatch_auto_unfreeze(order: dict, auth_no: str, amount: float, reason: str) -> bool:
@@ -412,6 +420,8 @@ def credit_query():
     # payment_method 由阿里在用户实际付款后返回：CREDITZHIMA=芝麻信用免押 / BALANCE=余额 / ...
     # 由此判断走的是免押还是押金（替代旧的本地 flow 字段）
     res["is_credit"] = (res.get("payment_method") or "").upper() == "CREDITZHIMA"
+    # 冻结成败的唯一判据，前端据此提示/刷新，不要在前端自行解读 status/found
+    res["is_frozen"] = is_frozen(res)
 
     # 主动查询是异步 notify 的兜底，查到的 auth_no 必须同样落库：
     # 授权号若只靠 freeze 通知写入，通知不可达（本地联调）或丢失时订单会一直

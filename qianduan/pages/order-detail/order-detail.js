@@ -203,7 +203,7 @@ Page({
           const q = await post('/api/alipay/credit/query', { out_order_no: o.id });
           // await 刷新完再返回：onLoad 的 credit=1 自动拉起支付读取的是刷新后的
           // 状态，已付款的订单不会再被拉起一次多余的收银台
-          if (q && (q.status === 'FROZEN' || q.found)) await this.loadOrder(o.id);
+          if (q && q.is_frozen) await this.loadOrder(o.id);
         } catch (err) {}
       }
     } catch (e) {}
@@ -497,10 +497,19 @@ Page({
       my.showLoading({ content: '确认结果', mask: true });
       const q = await post('/api/alipay/credit/query', { out_order_no: o.id });
       my.hideLoading();
-      my.alert({
-        title: (q && q.is_credit) ? '免押成功' : '押金冻结成功',
-        content: '订单已进入待发货，将尽快安排出库',
-      });
+      // tradePay 的 9000/6004 只代表收银台关闭，不代表冻结成功（无免押额度的
+      // 用户可能授权失败退出）；以后端对账出的 is_frozen 为准
+      if (q && q.is_frozen) {
+        my.alert({
+          title: q.is_credit ? '免押成功' : '押金冻结成功',
+          content: '订单已进入待发货，将尽快安排出库',
+        });
+      } else {
+        my.alert({
+          title: '未完成授权',
+          content: '尚未确认到押金冻结成功。如已完成支付请稍后下拉刷新；否则请重新发起免押/押金支付',
+        });
+      }
       this.loadOrder(o.id);
     } catch (e) {
       my.hideLoading();
