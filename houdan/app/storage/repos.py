@@ -206,6 +206,9 @@ order_repo = SqliteRepository(
         #                     改写成真实物流天数并据此重算 end_date，原值存这里备查，
         #                     不然改完就再也说不清"当初答应用户几天免租"了。
         "delivered_at": 0, "delivered_source": "", "ship_days_planned": 0,
+        # 物流轨迹缓存（订单详情页展示用，见 app/order_logistics.py）。
+        # 订单详情是最常被刷的页面，不缓存就等于每次进页面都打一次顺丰。
+        "logistics_routes": [], "logistics_synced_at": 0,
         # 用户下单时填的备注（确认订单页「备注」行）。与 order_note_repo 完全不同：
         # 那个是后台工作人员的审计日志，用户看不见；这个是用户写给商家的，双方可见。
         # payload 是 JSON blob，老订单没这个 key，读取处一律 .get() 兜底，无需迁移。

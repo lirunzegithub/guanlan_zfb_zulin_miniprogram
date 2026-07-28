@@ -75,6 +75,9 @@ export const api = {
   couriers: () => http.get('/logistics/couriers'),
   // 提交发货：{logistics_no, logistics_company?, huohao?}
   shipOrder: (oid, body) => http.post(`/orders/${oid}/ship`, body),
+  // 订单物流轨迹（后端按订单缓存；force=true 才回源打顺丰）
+  orderLogistics: (oid, force = false) =>
+    http.get(`/orders/${oid}/logistics`, force ? { params: { refresh: 1 } } : undefined),
   // 光影库存系统：按货号查商品卡片（服务端代理）
   inventoryItem: (huohao) => http.get('/inventory/item', { params: { huohao } }),
   // 光影库存系统：按货号数组批量查卡片（含派生平台/备注），供列表/详情渲染后异步补数

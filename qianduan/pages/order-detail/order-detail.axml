@@ -179,12 +179,28 @@
     </view>
   </view>
 
-  <!-- 物流信息（已发货后显示） -->
+  <!-- 物流信息（已发货后显示）
+       接了顺丰时多一段真实轨迹时间轴；没接 / 非顺丰单则退化成原来的两行 -->
   <view a:if="{{o.logistics_no}}" class="card logi-card">
     <view class="card-h">
       <text class="card-title">物流信息</text>
-      <text a:if="{{o._shippedAtText}}" class="muted-sm">{{o._shippedAtText}} 已发货</text>
+      <view class="lg-head-right">
+        <text a:if="{{o._shippedAtText}}" class="muted-sm">{{o._shippedAtText}} 已发货</text>
+        <text a:if="{{logi.supported}}" class="lg-refresh" onTap="onRefreshLogistics">
+          {{logi.loading ? '刷新中' : '刷新'}}
+        </text>
+      </view>
     </view>
+
+    <!-- 最新一条：单独放大，用户进页面第一眼要看的就是"现在到哪了" -->
+    <view a:if="{{logi.latest}}" class="lg-latest">
+      <view class="lg-latest-top">
+        <text class="lg-badge {{logi.latest.signed ? 'signed' : ''}}">{{logi.latest.status}}</text>
+        <text class="lg-latest-time">{{logi.latest._d}} {{logi.latest._t}}</text>
+      </view>
+      <text class="lg-latest-desc">{{logi.latest.desc}}</text>
+    </view>
+
     <view class="info-row">
       <text class="info-k">快递公司</text>
       <text class="info-v">{{o._logiCompanyName}}</text>
@@ -192,6 +208,36 @@
     <view class="info-row">
       <text class="info-k">运单号</text>
       <text class="info-v mono" onTap="onCopyLogisticsNo">{{o.logistics_no}}<text class="copy-hint"> 复制</text></text>
+    </view>
+
+    <!-- 全部轨迹：默认收起，展开后是自上而下的时间轴（最新在最上） -->
+    <block a:if="{{logi.supported && logi.routes.length}}">
+      <view class="lg-toggle" onTap="toggleLogi">
+        <text>{{logi.expanded ? '收起物流详情' : '查看全部物流（' + logi.routes.length + ' 条）'}}</text>
+        <text class="lg-arrow {{logi.expanded ? 'up' : ''}}">›</text>
+      </view>
+
+      <view a:if="{{logi.expanded}}" class="lg-timeline">
+        <view a:for="{{logi.routes}}" a:for-item="r" a:key="time"
+              class="lg-node {{index === 0 ? 'first' : ''}} {{r.signed ? 'signed' : ''}}">
+          <view class="lg-axis">
+            <view class="lg-dot"></view>
+            <view a:if="{{index !== logi.routes.length - 1}}" class="lg-line"></view>
+          </view>
+          <view class="lg-body">
+            <view class="lg-node-top">
+              <text class="lg-node-status">{{r.status}}</text>
+              <text class="lg-node-time">{{r._d}} {{r._t}}</text>
+            </view>
+            <text class="lg-node-desc">{{r.desc}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 拉不到轨迹时只提示一句，不影响上面的运单号展示 -->
+    <view a:if="{{logi.loaded && logi.supported && !logi.routes.length}}" class="lg-empty">
+      {{logi.error || '暂无物流轨迹，快递员揽收后即可查看'}}
     </view>
   </view>
 

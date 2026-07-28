@@ -1226,6 +1226,20 @@ def admin_ship_order(oid):
     return ok(_order_view(fresh), msg)
 
 
+@bp.get("/orders/<oid>/logistics")
+def admin_order_logistics(oid):
+    """订单物流轨迹（后台）。与用户端同一套缓存，?refresh=1 强制回源。"""
+    from app import order_logistics
+    o = order_repo.get(oid)
+    if not o:
+        return fail(404, "订单不存在")
+    force = (request.args.get("refresh") or "").strip() in ("1", "true")
+    try:
+        return ok(order_logistics.fetch(o, force=force))
+    except Exception as e:
+        return fail(1, f"物流查询异常：{e}")
+
+
 @bp.post("/orders/<oid>/sync")
 def admin_resync_order(oid):
     """手动重试支付宝商家订单同步。失败也返回 200，错误信息走 msg。"""

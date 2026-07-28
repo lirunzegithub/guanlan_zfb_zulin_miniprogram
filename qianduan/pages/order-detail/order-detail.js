@@ -145,6 +145,11 @@ Page({
     rent: { show: false },
     steps: STEPS,
     infoOpen: false,          // 订单信息「展开更多」
+    // 物流轨迹。supported=false 时卡片退化成"公司 + 运单号"，不显示时间轴
+    logi: {
+      loading: false, loaded: false, supported: false,
+      routes: [], latest: null, signedAt: '', error: '', expanded: false,
+    },
   },
 
   onLoad(q) {
@@ -226,8 +231,9 @@ Page({
       this._refreshRent();
       if (RENT_CARD_STATUS.has(o.status)) this._startRentTimer();
       else this._stopRentTimer();
-      // 并行拉历史扣款记录（拉不到也不阻塞主流程）
+      // 并行拉历史扣款记录 / 物流轨迹（拉不到也不阻塞主流程）
       this.loadCharges();
+      this.loadLogistics();
       // 待免押且发起过冻结的订单：进页面主动向支付宝对账一次。
       // 用户付完款没等到结果就退出/异步通知丢失时，凭这次 query 就能把订单
       // 推进到待发货，而不是一直停在"待免押"。只对账一次，避免 loadOrder 循环。
@@ -246,6 +252,54 @@ Page({
 
   toggleInfo() { this.setData({ infoOpen: !this.data.infoOpen }); },
   onOpenAgreement() { my.navigateTo({ url: '/pages/agreement/agreement' }); },
+
+  // -------------------- 物流轨迹 --------------------
+  // 后端已按订单缓存（在途 30 分钟 / 已签收 24 小时），这里只管取和渲染。
+  // 未配顺丰、非顺丰单、还没发货，接口都回 supported=false，卡片退化成
+  // 原来的"公司 + 运单号"两行，不报错也不留空白。
+
+  /** 轨迹时间戳 'YYYY-MM-DD HH:MM:SS' → 拆成 {d:'10-03', t:'07:55'} 两列展示 */
+  _fmtRouteTime(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s || '');
+    return m ? { d: `${m[2]}-${m[3]}`, t: `${m[4]}:${m[5]}` } : { d: s || '', t: '' };
+  },
+
+  async loadLogistics(force) {
+    const o = this.data.o;
+    if (!o || !o.logistics_no) return;
+    if (this.data.logi.loading) return;
+    this.setData({ 'logi.loading': true });
+    try {
+      const r = await get(`/api/orders/${o.id}/logistics${force ? '?refresh=1' : ''}`);
+      const routes = (r.routes || []).map((x) => {
+        const tm = this._fmtRouteTime(x.time);
+        return { ...x, _d: tm.d, _t: tm.t };
+      });
+      this.setData({
+        logi: {
+          loading:  false,
+          loaded:   true,
+          supported: !!r.supported,
+          routes,
+          latest:   routes[0] || null,
+          signedAt: r.signed_at || '',
+          error:    r.error || '',
+          expanded: this.data.logi.expanded,
+        },
+      });
+    } catch (e) {
+      this.setData({ 'logi.loading': false, 'logi.loaded': true });
+    }
+  },
+
+  toggleLogi() { this.setData({ 'logi.expanded': !this.data.logi.expanded }); },
+
+  /** 手动刷新：绕过缓存回源。用户主动触发，频次可控 */
+  async onRefreshLogistics() {
+    if (this.data.logi.loading) return;
+    await this.loadLogistics(true);
+    my.showToast({ content: '已刷新', duration: 1200 });
+  },
 
   // -------------------- 实时租金累计 --------------------
   // 拼一份当前的 rent 视图模型

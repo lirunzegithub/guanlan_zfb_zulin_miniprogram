@@ -1,4 +1,5 @@
 """订单接口（全 SQLite 持久化版）"""
+import logging
 import time
 import uuid
 from flask import Blueprint, request
@@ -20,6 +21,7 @@ from app.coupons import (
 from app.routes.products import _abs as _abs_url
 
 bp = Blueprint("orders", __name__)
+logger = logging.getLogger(__name__)
 
 # 业务硬约束：用机最少 3 天（不含物流期）。商品后台不允许配置覆盖。
 MIN_RENT_DAYS = 3
@@ -129,6 +131,32 @@ _REASON_LABEL_FOR_USER = {
     "DAMAGE_LOSS":          "损坏/丢失赔偿",
     "USER_CONFIRMED_OTHER": "其他费用",
 }
+
+
+@bp.get("/<oid>/logistics")
+def order_logistics_routes(oid):
+    """订单物流轨迹（用户端）。走缓存，?refresh=1 强制回源（下拉刷新用）。
+
+    不支持查轨迹的单（非顺丰 / 未配顺丰 / 还没发货）也返回 200，
+    只是 supported=false——前端据此决定展不展开轨迹区，不需要区分错误。
+    """
+    from app import order_logistics
+    uid = current_user_id()
+    o = order_repo.get(oid)
+    if not o:
+        return fail(404, "订单不存在")
+    if o.get("user_id") != uid:
+        return fail(403, "无权查看")
+
+    force = (request.args.get("refresh") or "").strip() in ("1", "true")
+    try:
+        return ok(order_logistics.fetch(o, force=force))
+    except Exception as e:
+        # 物流查不到不该让整个详情页报错，返回空轨迹让页面照常渲染
+        logger.warning("order_logistics oid=%s err: %s", oid, e)
+        return ok({"supported": False, "routes": [], "synced_at": 0,
+                   "cached": False, "signed_at": "", "error": "物流信息暂时查询不到",
+                   "company": "", "waybill_no": (o.get("logistics_no") or "")})
 
 
 @bp.get("/<oid>/charges")

@@ -372,8 +372,35 @@
             <div>
               <span class="tag tag-green" style="margin-right:6px">{{ detail.logistics_company_name }}</span>
               <span class="mono">{{ detail.logistics_no }}</span>
+              <button v-if="logi.supported || !logi.loaded" class="btn-link" style="margin-left:10px"
+                      :disabled="logi.loading" @click="loadLogistics(true)">
+                {{ logi.loading ? '查询中…' : (logi.loaded ? '刷新轨迹' : '查看轨迹') }}
+              </button>
             </div>
             <div class="muted" v-if="detail.shipped_at_text">发货时间：{{ detail.shipped_at_text }}</div>
+
+            <!-- 轨迹：顺丰单且已配凭据时才有；其余情况只显示上面的运单号 -->
+            <div v-if="logi.loaded && !logi.supported" class="muted" style="margin-top:4px">
+              该运单不支持轨迹查询（仅顺丰单、且需在「系统设置」里配好顺丰凭据）
+            </div>
+            <div v-if="logi.error" class="muted" style="margin-top:4px; color:#c0260b">
+              {{ logi.error }}
+            </div>
+            <div v-if="logi.routes.length" class="lg-box">
+              <div class="lg-meta">
+                共 {{ logi.routes.length }} 条轨迹
+                <span v-if="logi.signed_at">· 签收于 {{ logi.signed_at }}</span>
+                <span v-if="logi.synced_at_text" class="muted">· 数据更新于 {{ logi.synced_at_text }}</span>
+              </div>
+              <div v-for="(r, i) in logi.routes" :key="i"
+                   :class="['lg-row', { first: i === 0, signed: r.signed }]">
+                <span class="lg-dot"></span>
+                <code class="lg-time">{{ r.time }}</code>
+                <span class="lg-status">{{ r.status }}</span>
+                <span class="lg-place">{{ r.place }}</span>
+                <span class="lg-desc" :title="r.desc">{{ r.desc }}</span>
+              </div>
+            </div>
           </div>
           <div class="field" v-if="detail.item_huohao">
             <div class="label">绑定库存商品（光影）</div>
@@ -1237,7 +1264,44 @@ export default {
         loadCharges();
         loadNotes();
         loadInvCard();   // 异步拉光影商品卡片+租赁记录，不阻塞详情主体渲染
+        // 物流轨迹：先清空再拉，避免上一单的轨迹闪现在这一单上
+        Object.assign(logi, { loading: false, loaded: false, supported: false,
+                              routes: [], signed_at: '', synced_at_text: '', error: '' });
+        if ((full.logistics_no || '').trim()) loadLogistics();
       } catch (e) { alert(e.message || '加载失败'); }
+    };
+
+    // ── 物流轨迹 ──
+    // 后端按订单缓存（在途 30 分钟 / 已签收 24 小时），这里默认读缓存；
+    // force=true 是运营点「刷新轨迹」时才回源，避免开个详情就打一次顺丰。
+    const logi = reactive({
+      loading: false, loaded: false, supported: false,
+      routes: [], signed_at: '', synced_at_text: '', error: '',
+    });
+    const loadLogistics = async (force = false) => {
+      const d = detail.value;
+      if (!d || logi.loading) return;
+      logi.loading = true;
+      try {
+        const r = await api.orderLogistics(d.id, force);
+        // 请求期间运营可能已经切到别的订单，回来的数据就不该再往上贴
+        if (!detail.value || detail.value.id !== d.id) return;
+        Object.assign(logi, {
+          loaded: true,
+          supported: !!r.supported,
+          routes: r.routes || [],
+          signed_at: r.signed_at || '',
+          synced_at_text: r.synced_at
+            ? new Date(r.synced_at * 1000).toLocaleString('zh-CN', { hour12: false })
+            : '',
+          error: r.error || '',
+        });
+      } catch (e) {
+        logi.loaded = true;
+        logi.error = e.message || '轨迹查询失败';
+      } finally {
+        logi.loading = false;
+      }
     };
 
     // 详情页异步补数：按本单货号拉光影卡片，填入 item_snapshot + 平台/备注。
@@ -1787,6 +1851,7 @@ export default {
     return {
       list, loading, tabs: TABS, curTab, keyword, statusLabel: STATUS_LABEL,
       detail, invCardLoading, editStatus, forceStatus, saving,
+      logi, loadLogistics,
       notes, notesLoading, noteInput, noteSubmitting, loadNotes, submitNote,
       alipay, alipayLoading, loadAlipayDetail, failHeadline,
       charges, chargesLoading, chargeBusy, chargeForm, chargeSubmitting,
@@ -2228,6 +2293,40 @@ export default {
 .refund-item + .refund-item { border-top: 1px dashed #dde3ec; padding-top: 4px; margin-top: 4px; }
 
 /* 光影库存商品卡片（发货弹窗 + 订单详情共用） */
+/* ===== 物流轨迹（订单详情）=====
+   一行一条，最新那条加重显示；行内固定列宽让时间/状态/地点纵向对齐，
+   长备注单行截断并挂 title，避免把详情面板撑高。 */
+.lg-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+  border: 1px solid #eef1f6;
+  border-radius: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.lg-meta { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
+.lg-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: #9aa3b2;
+  padding: 3px 0;
+}
+.lg-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #d3d8e2; flex-shrink: 0;
+  align-self: center;
+}
+.lg-row.first .lg-dot { background: #4d8dff; width: 8px; height: 8px; }
+.lg-row.first.signed .lg-dot { background: #2a7942; }
+.lg-row.first { color: #1a1f2e; font-weight: 500; }
+.lg-time { font-family: ui-monospace, Menlo, monospace; flex-shrink: 0; }
+.lg-status { width: 48px; flex-shrink: 0; }
+.lg-place { width: 64px; flex-shrink: 0; }
+.lg-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .inv-card {
   display: flex;
   gap: 12px;
