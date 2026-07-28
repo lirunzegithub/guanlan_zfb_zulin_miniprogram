@@ -18,9 +18,16 @@
     空格转 '+'），Python 对应 quote_plus。两者仅在 '*' '~' 上有差异，而 msgData
     是 JSON + 运单号（纯字母数字），不会出现这两个字符，等价。
 
-【待真机核验】以下两处依据公开文档写成，拿到真实响应后需复核（见 _SIGNED_OP_CODES）：
-    1. 签收轨迹的 opCode 取值
-    2. apiResultData 是 JSON **字符串**，需二次 json.loads（丰桥的历史设计）
+【已实测确认】2026-07-28 打丰桥沙箱（顾客编码 Y2AE7TV4）验证过：
+    1. 上面的 msgDigest 算法正确——EXP_RECE_QUERY_SFWAYBILL 回 apiResultCode=A1000
+       并带回完整业务数据，而 A1000 必须先过签名校验
+    2. apiResultData 确实是 JSON **字符串**，需二次 json.loads（丰桥的历史设计）
+    3. 网关**先查服务权限、再验签名**：接口没关联到应用时，签名对错都回 A1004，
+       所以 A1004 不要往签名方向排查
+
+【待真机核验】签收轨迹的 opCode 取值（见 _SIGNED_OP_CODES）。路由查询接口尚未
+    关联到应用，等沙箱能调通后按真实轨迹校准。校准前该值取错的后果是可控的：
+    多认 → 提前跳「租赁中」；漏认 → 退化为定时器保底，不会卡单。
 """
 from __future__ import annotations
 
@@ -112,10 +119,15 @@ def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str]:
         return False, f"顺丰接口请求失败：{e}"
 
     # 网关层：A1000 = 成功，其余都是鉴权/限流/参数问题
-    if (body.get("apiResultCode") or "") != "A1000":
+    code = body.get("apiResultCode") or ""
+    if code != "A1000":
+        hint = ""
+        if code == "A1004":
+            # 实测：接口没关联到应用时签名对错都回这个码，别往签名方向排查
+            hint = (f"——该顾客编码没有「{service_code}」的服务权限，"
+                    f"需在丰桥应用里关联该接口并完成沙箱联调后申请上线")
         return False, (
-            f"顺丰网关拒绝（{body.get('apiResultCode')}）："
-            f"{body.get('apiErrorMsg') or '无错误描述'}"
+            f"顺丰网关拒绝（{code}）：{body.get('apiErrorMsg') or '无错误描述'}{hint}"
         )
 
     # 业务层数据被包成 JSON 字符串再塞回来，需要二次解析
