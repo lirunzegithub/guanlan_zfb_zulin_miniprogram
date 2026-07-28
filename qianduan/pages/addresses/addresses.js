@@ -5,8 +5,22 @@ function maskPhone(p) {
   return p.slice(0, 3) + '****' + p.slice(-4);
 }
 
+// 选择模式下把选中的地址交还给上一页。用 storage 而不是 getCurrentPages()
+// 直接调上一页方法：页面栈在「新增地址→返回」这类多级返回里不总是可预期的，
+// storage 由消费方读完即删，谁在栈顶都能拿到。
+const PICKED_ADDR_KEY = 'picked_address';
+
 Page({
-  data: { list: [], loaded: false },
+  // pick=true：整行点击 = 选中并返回（确认订单页的「选地址」入口）
+  // pick=false：整行点击 = 编辑（「我的地址」管理入口，原有行为）
+  data: { list: [], loaded: false, pick: false },
+
+  onLoad(q) {
+    if (q && q.pick === '1') {
+      this.setData({ pick: true });
+      my.setNavigationBar({ title: '选择收货地址' });
+    }
+  },
 
   onShow() { this.load(); },
 
@@ -23,6 +37,18 @@ Page({
   onAdd()  { my.navigateTo({ url: '/pages/address-edit/address-edit' }); },
   onEdit(e) {
     my.navigateTo({ url: '/pages/address-edit/address-edit?id=' + e.currentTarget.dataset.id });
+  },
+
+  /** 整行点击：选择模式下选中返回，否则沿用原来的「进编辑页」 */
+  onRowTap(e) {
+    if (!this.data.pick) { this.onEdit(e); return; }
+    const id = e.currentTarget.dataset.id;
+    const addr = this.data.list.find((a) => String(a.id) === String(id));
+    if (!addr) return;
+    try {
+      my.setStorageSync({ key: PICKED_ADDR_KEY, data: addr });
+    } catch (err) {}
+    my.navigateBack();
   },
 
   async onSetDefault(e) {

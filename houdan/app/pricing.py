@@ -4,7 +4,30 @@
 首段 from==1，最后一段隐含覆盖到无穷天。租 N 天按 N 落在的段逐段累加。
 """
 from __future__ import annotations
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
+
+
+def round_yuan(x) -> float:
+    """金额四舍五入到「元」（half-up），用户看到和实付的租金一律是整数。
+
+    为什么不用内置 round()：它是银行家舍入（round half to even），
+    round(114.5)=114、round(115.5)=116，而前端 Math.round 一律 half-up
+    （114.5→115）。两边规则不同 → 同一笔订单前后端能差出 1 元。
+
+    为什么先量化到分再到元：分段租金是逐段浮点累加出来的，
+    3.82*30 这类算式会得到 114.59999999999999，直接取整会少 1 元。
+    先归到分消除累加误差，再取整到元。
+
+    与前端 utils/pricing.js 的 roundYuan()、
+    管理后台 Products.vue 的 roundYuan() 必须保持同一规则。
+    """
+    try:
+        d = Decimal(str(float(x or 0)))
+    except (TypeError, ValueError, ArithmeticError):
+        return 0.0
+    cents = d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return float(cents.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def normalize_tiers(raw) -> list[dict]:
@@ -71,7 +94,12 @@ def validate_tiers(raw) -> tuple[bool, str]:
 
 
 def calc_amount(days: int, tiers: Iterable[dict]) -> float:
-    """按分段累加 N 天总金额。"""
+    """按分段累加 N 天总金额，四舍五入到元。
+
+    取整只发生在这里（累加完成后一次性取整），不逐段取整——逐段取整会把
+    每段最多 0.5 元的误差累积起来，段越多偏得越远。
+    日单价保持小数（长租阶梯靠它区分），只有总额是整数。
+    """
     days = max(0, int(days or 0))
     if days == 0:
         return 0.0
@@ -84,7 +112,7 @@ def calc_amount(days: int, tiers: Iterable[dict]) -> float:
         seg_end = (segs[i + 1]["from"] - 1) if i + 1 < len(segs) else days
         seg_end = min(seg_end, days)
         total += (seg_end - seg_from + 1) * seg["price"]
-    return round(total, 2)
+    return round_yuan(total)
 
 
 def substitute_zero_tiers(tiers: Iterable[dict], fallback: float) -> list[dict]:

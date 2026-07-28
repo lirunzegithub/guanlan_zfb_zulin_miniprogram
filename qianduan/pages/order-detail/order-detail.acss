@@ -1,55 +1,228 @@
+/* ===== 页面基底 =====
+   参考稿的骨架：浅灰底 + 白色大圆角卡片，卡片之间留白，
+   顶部状态区直接铺在背景上（它是页面标题，不是内容） */
 .page {
-  position: relative;
   min-height: 100vh;
-  padding: 24rpx;
+  padding: 8rpx 24rpx 0;
+  background: var(--bg);
 }
-.bg-top {
+.card {
+  background: #fff;
+  border-radius: 24rpx;
+  padding: 28rpx;
+  margin-bottom: 20rpx;
+  box-shadow: none;
+}
+
+/* ===== 顶部状态区 ===== */
+.hero { padding: 24rpx 8rpx 28rpx; }
+.hero-status {
+  font-size: 48rpx; font-weight: 700; color: var(--text);
+  line-height: 1.2;
+}
+.hero-sub-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 14rpx;
+}
+.hero-sub { font-size: 26rpx; color: var(--text-2); flex: 1; }
+
+/* ----- 五段进度 ----- */
+.steps { margin-top: 34rpx; }
+.steps-track { display: flex; align-items: center; }
+/* 每段 = 一条底线 + 线尾一个节点，等分铺开 */
+.step-seg {
+  flex: 1;
+  position: relative;
+  display: flex; align-items: center;
+}
+.step-bar {
+  flex: 1; height: 8rpx;
+  background: #e6ebf3;
+  border-radius: 4rpx;
+}
+.step-bar.on { background: var(--primary); }
+.step-dot {
+  position: absolute; left: 0; top: 50%;
+  width: 12rpx; height: 12rpx; margin: -6rpx 0 0 -6rpx;
+  border-radius: 50%;
+  background: #cbd3df;
+}
+.step-seg:first-child .step-dot { left: 6rpx; }
+.step-dot.done { background: var(--primary); }
+/* 当前节点：主色实心 + 白勾，从进度条上凸出来 */
+.step-dot.cur {
+  width: 34rpx; height: 34rpx; margin: -17rpx 0 0 -17rpx;
+  background: var(--primary);
+}
+.step-dot.cur::after {
+  content: '';
   position: absolute;
-  left: 0; right: 0; top: 0;
-  height: 360rpx;
-  background: linear-gradient(180deg, #2b7cff 0%, #5aa1ff 100%);
-  z-index: 0;
+  left: 11rpx; top: 8rpx;
+  width: 8rpx; height: 15rpx;
+  border-right: 3rpx solid #fff;
+  border-bottom: 3rpx solid #fff;
+  transform: rotate(45deg);
 }
+.steps-labels { display: flex; margin-top: 18rpx; }
+.step-label {
+  flex: 1;
+  font-size: 22rpx; color: var(--text-3);
+  text-align: center;
+}
+.step-label:first-child { text-align: left; }
+.step-label:last-child { text-align: right; }
+.step-label.on { color: var(--primary); font-weight: 600; }
+
+/* ===== 主卡片：地址 + 商品 + 租期 ===== */
+.mc-addr {
+  display: flex; align-items: flex-start; gap: 16rpx;
+  padding-bottom: 24rpx;
+  border-bottom: 1rpx solid var(--line);
+}
+.mc-goods { display: flex; gap: 20rpx; padding: 24rpx 0 4rpx; }
+.mc-thumb {
+  width: 160rpx; height: 160rpx;
+  border-radius: 16rpx;
+  background: #f4f7fb;
+  flex-shrink: 0;
+}
+.mc-thumb-ph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20rpx; color: #9aa4b2; text-align: center;
+  padding: 8rpx;
+}
+.mc-gbody { flex: 1; min-width: 0; }
+.mc-grow1 { display: flex; align-items: flex-start; gap: 12rpx; }
+.mc-gname {
+  flex: 1; min-width: 0;
+  font-size: 28rpx; color: var(--text); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.mc-gqty { font-size: 24rpx; color: var(--text-3); flex-shrink: 0; }
+.mc-gspec {
+  font-size: 24rpx; color: var(--text-3);
+  margin-top: 8rpx;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mc-gtags { display: flex; flex-wrap: wrap; gap: 10rpx; margin-top: 14rpx; }
+.mc-gtag {
+  font-size: 20rpx; color: var(--text-2);
+  border: 1rpx solid #e2e7ef;
+  border-radius: 6rpx;
+  padding: 4rpx 12rpx;
+}
+.mc-tl-note {
+  font-size: 22rpx; color: var(--text-3);
+  margin: 24rpx 0 16rpx;
+}
+
+/* ----- 租期条：五格，中间三格是一整块浅蓝圆角 = 计费区间 ----- */
+.tlbar {
+  border: 1rpx solid var(--line);
+  border-radius: 14rpx;
+  padding: 8rpx;
+}
+.tlbar-cells { display: flex; align-items: stretch; }
+.tlbar-cell {
+  flex: 1;
+  padding: 18rpx 0;
+  text-align: center;
+  font-size: 24rpx; color: var(--text-3);
+}
+/* 高亮块占 3 格宽，自带圆角，与两端灰格留出间隙 */
+.tlbar-hl {
+  flex: 3;
+  display: flex;
+  background: #eef4ff;
+  border-radius: 12rpx;
+}
+.tlbar-cell.on { color: var(--text); font-weight: 600; }
+.tlbar-cell.strong { color: var(--primary); }
+
+.tlbar-dates { display: flex; padding: 0 0 8rpx; }
+.tlbar-dcell {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center;
+}
+/* 指向上方高亮块的小三角 */
+.tlbar-caret {
+  width: 0; height: 0;
+  margin-bottom: 6rpx;
+  border-left: 9rpx solid transparent;
+  border-right: 9rpx solid transparent;
+  border-bottom: 9rpx solid #c7d8f7;
+}
+.tlbar-date {
+  font-size: 24rpx; color: var(--text-3);
+  line-height: 1.4;
+}
+.tlbar-date.on { color: var(--text); font-weight: 600; }
+
+/* ===== 订单信息卡 ===== */
+.oid-row { display: flex; align-items: center; gap: 16rpx; }
+.oid-k { font-size: 26rpx; color: var(--text-2); flex-shrink: 0; }
+.oid-v {
+  flex: 1; min-width: 0;
+  font-size: 24rpx; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.oid-copy {
+  flex-shrink: 0;
+  font-size: 24rpx; color: var(--text-2);
+  padding-left: 16rpx;
+  border-left: 1rpx solid var(--line);
+}
+.info-more {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8rpx;
+  padding-top: 20rpx;
+  font-size: 24rpx; color: var(--text-3);
+}
+.info-more-t { font-size: 24rpx; color: var(--text-3); }
+.info-more-arr {
+  width: 0; height: 0;
+  border-left: 8rpx solid transparent;
+  border-right: 8rpx solid transparent;
+  border-top: 9rpx solid #b9c0cc;
+  transition: transform .2s;
+}
+.info-more-arr.up { transform: rotate(180deg); }
+.info-v.cut { color: #f0560b; }
+.info-v.strong { color: var(--text); font-weight: 600; }
+
+/* ===== 平台保障 ===== */
+.guard-more { font-size: 24rpx; color: var(--text-3); }
+.guard-item {
+  display: flex; align-items: flex-start; gap: 16rpx;
+  padding-top: 24rpx;
+}
+/* 盾牌图标：CSS 画，不用 emoji（各机型渲染成彩色、对不齐） */
+.guard-ico {
+  width: 32rpx; height: 34rpx;
+  flex-shrink: 0; margin-top: 4rpx;
+  background: var(--primary);
+  clip-path: polygon(50% 0%, 100% 22%, 100% 58%, 50% 100%, 0% 58%, 0% 22%);
+  -webkit-clip-path: polygon(50% 0%, 100% 22%, 100% 58%, 50% 100%, 0% 58%, 0% 22%);
+  position: relative;
+}
+.guard-ico::after {
+  content: '';
+  position: absolute;
+  left: 9rpx; top: 9rpx;
+  width: 7rpx; height: 13rpx;
+  border-right: 3rpx solid #fff;
+  border-bottom: 3rpx solid #fff;
+  transform: rotate(45deg);
+}
+.guard-body { flex: 1; min-width: 0; }
+.guard-t { font-size: 26rpx; color: var(--text); font-weight: 600; }
+.guard-s { font-size: 22rpx; color: var(--text-3); margin-top: 6rpx; line-height: 1.5; }
 
 /* 待认证 banner */
-.face-banner {
-  height: 420rpx;
-  padding: 36rpx 40rpx;
-  color: #fff;
-}
-.bn-title {
-  position: relative;
-  z-index: 1;
-  font-size: 44rpx;
-  font-weight: 800;
-  margin-bottom: 16rpx;
-}
-.bn-row {
-  position: relative; z-index: 1;
-  display: flex; align-items: center; gap: 8rpx;
-  margin-bottom: 8rpx;
-}
-.bn-tag { font-size: 24rpx; color: rgba(255,255,255,0.95); }
-.bn-time {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 44rpx; height: 40rpx;
-  background: rgba(255,255,255,0.18);
-  border-radius: 6rpx;
-  color: #fff; font-size: 24rpx; font-weight: 700;
-  padding: 0 8rpx;
-}
-.bn-sub {
-  position: relative; z-index: 1;
-  font-size: 24rpx; color: rgba(255,255,255,0.85);
-  margin-top: 12rpx;
-}
 
 /* 地址卡 */
-.addr-card {
-  position: relative; z-index: 1;
-  display: flex; align-items: flex-start; gap: 18rpx;
-  padding: 24rpx 28rpx;
-}
 .addr-ico {
   width: 56rpx; height: 56rpx;
   border-radius: 50%;
@@ -95,33 +268,6 @@
 }
 
 /* 商品卡（待认证版） */
-.goods-card { display: flex; gap: 20rpx; padding: 24rpx; }
-.g-thumb {
-  width: 160rpx; height: 160rpx;
-  border-radius: 12rpx;
-  background: linear-gradient(135deg, #fff5e6, #ffd9a8);
-  position: relative; overflow: hidden; flex-shrink: 0;
-}
-.g-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8rpx; }
-.g-name {
-  font-size: 28rpx; color: #1a1f2e; font-weight: 600;
-  overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-.g-row {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: 4rpx;
-}
-.g-credit-tag {
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 20rpx;
-  font-weight: 600;
-  padding: 4rpx 12rpx;
-  border-radius: 6rpx;
-}
-.g-pkg { font-size: 22rpx; color: var(--primary); }
-.g-meta { font-size: 22rpx; color: #9aa4b2; }
 
 /* 发货倒计时卡 */
 .ship-card {
@@ -307,72 +453,6 @@
 }
 
 /* 状态卡（非待认证时） */
-.status-card { padding: 28rpx; }
-.meta-info { flex: 1; min-width: 0; padding-right: 16rpx; }
-.meta-product {
-  font-size: 26rpx; color: #1a1f2e; font-weight: 700;
-  margin-bottom: 8rpx;
-  overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-.thumb-img {
-  width: 100%; height: 100%;
-  display: block;
-  border-radius: 12rpx;
-}
-.status-row {
-  display: flex; align-items: center; gap: 14rpx;
-  padding-bottom: 20rpx;
-  border-bottom: 1rpx solid var(--line);
-}
-.status-ico {
-  width: 44rpx; height: 44rpx;
-  background: var(--primary);
-  border-radius: 8rpx;
-  display: flex; align-items: center; justify-content: center;
-}
-.ic-doc {
-  width: 22rpx; height: 26rpx;
-  background: #fff;
-  position: relative;
-  border-radius: 2rpx;
-}
-.ic-doc::before, .ic-doc::after {
-  content: ''; position: absolute;
-  left: 4rpx; right: 4rpx; height: 2rpx;
-  background: var(--primary);
-}
-.ic-doc::before { top: 8rpx; }
-.ic-doc::after  { top: 14rpx; }
-.status-text {
-  font-size: 30rpx; font-weight: 800; color: var(--primary);
-}
-.status-meta {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 24rpx 0 12rpx;
-}
-.meta-k { font-size: 24rpx; color: #4a5060; }
-.status-thumb {
-  width: 130rpx; height: 130rpx;
-  border-radius: 12rpx;
-  background: #f4f6fa;
-  position: relative; overflow: hidden;
-  flex-shrink: 0;
-}
-.thumb-bot {
-  position: absolute; bottom: 6rpx; left: 4rpx; right: 4rpx;
-  background: #ff2d2d;
-  color: #fff;
-  font-size: 16rpx;
-  text-align: center;
-  padding: 4rpx 6rpx;
-  border-radius: 4rpx;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.status-price {
-  font-size: 36rpx; color: #ff2d2d; font-weight: 800;
-  padding-top: 12rpx;
-}
 
 /* 通用卡头 */
 .card-h {
@@ -380,7 +460,6 @@
   margin-bottom: 16rpx;
 }
 .card-title { font-size: 28rpx; font-weight: 700; color: #1a1f2e; }
-.big-price { font-size: 36rpx; color: #1a1f2e; font-weight: 800; }
 
 /* 历史扣款记录卡 */
 .charges-card .charge-total {
@@ -504,17 +583,6 @@
   box-shadow: 0 -4rpx 16rpx rgba(0,0,0,0.04);
   z-index: 90;
 }
-.bb-more {
-  width: 64rpx; height: 64rpx;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.dots {
-  display: flex; gap: 6rpx;
-}
-.dots view {
-  width: 8rpx; height: 8rpx; border-radius: 50%; background: #9aa4b2;
-}
 .bb-ghost {
   flex-shrink: 0;
   padding: 18rpx 24rpx;
@@ -533,8 +601,6 @@
   gap: 2rpx;
   box-shadow: 0 8rpx 20rpx rgba(43,124,255,0.3);
 }
-.bbp-t { font-size: 28rpx; font-weight: 700; line-height: 1; }
-.bbp-s { font-size: 18rpx; opacity: 0.9; line-height: 1; }
 
 /* 申请取消相关 */
 .bb-primary.disabled {

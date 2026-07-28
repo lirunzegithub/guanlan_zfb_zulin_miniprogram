@@ -7,9 +7,9 @@
           class="input kw-input"
           v-model.trim="keyword"
           placeholder="订单号 / 商品名 / 收货人 / 用户ID"
-          @keyup.enter="fetch"
+          @keyup.enter="doSearch"
         />
-        <button class="btn btn-ghost btn-sm" @click="fetch">搜索</button>
+        <button class="btn btn-ghost btn-sm" @click="doSearch">搜索</button>
         <button class="btn btn-ghost btn-sm" @click="resetFilter" v-if="keyword || curTab !== 'all'">重置</button>
       </div>
     </div>
@@ -33,6 +33,7 @@
           <th style="width:120px">订单号</th>
           <th style="min-width:240px">商品</th>
           <th style="width:160px">用户</th>
+          <th style="width:70px">年龄</th>
           <th style="width:80px">天数</th>
           <th style="width:110px">下单租金</th>
           <th style="width:110px">押金</th>
@@ -63,10 +64,16 @@
                 <span v-else class="prod-cover-fallback">无图</span>
               </div>
               <div>
-                <div class="prod-name">{{ o.product_name || `#${o.product_id}` }}</div>
+                <div class="prod-name">
+                  {{ o.product_name || `#${o.product_id}` }}
+                  <span v-if="o.sku_name" class="sku-tag" title="下单时选中的 SKU">{{ o.sku_name }}</span>
+                </div>
                 <div class="muted">¥{{ fmt(o.price_per_day) }} / {{ o.days }} 天</div>
                 <span v-if="o.rent_platform" class="rent-plat" title="租赁平台（来自光影库存）">
                   {{ o.rent_platform }}
+                </span>
+                <span v-if="o.rent_remark" class="rent-remark" title="租赁备注（来自光影库存）">
+                  {{ o.rent_remark }}
                 </span>
               </div>
             </div>
@@ -74,6 +81,10 @@
           <td>
             <div>{{ o.user_real_name || o.user_nickname || '匿名' }}</div>
             <div class="muted">{{ o.user_phone || o.user_id }}</div>
+          </td>
+          <td>
+            <span v-if="o.user_age != null">{{ o.user_age }} 岁</span>
+            <span v-else class="muted" title="该用户未提交身份证信息">-</span>
           </td>
           <td>{{ o.days }}</td>
           <td>
@@ -140,15 +151,15 @@
             <button class="btn-link danger" @click="remove(o)">删除</button>
           </td>
         </tr>
-        <tr v-if="!loading && !list.length"><td colspan="10" class="empty">暂无订单</td></tr>
-        <tr v-if="loading"><td colspan="10" class="loading">加载中...</td></tr>
+        <tr v-if="!loading && !list.length"><td colspan="11" class="empty">暂无订单</td></tr>
+        <tr v-if="loading && !list.length"><td colspan="11" class="loading">加载中...</td></tr>
       </tbody>
     </table>
 
     <!-- 移动端：卡片式订单列表（与上方表格互斥显示） -->
     <div class="order-cards">
-      <div v-if="loading" class="loading">加载中...</div>
-      <div v-else-if="!list.length" class="empty">暂无订单</div>
+      <div v-if="loading && !list.length" class="loading">加载中...</div>
+      <div v-else-if="!loading && !list.length" class="empty">暂无订单</div>
       <div v-for="o in list" :key="'m-' + o.id" class="order-card">
         <div class="oc-head">
           <span class="oid">{{ o.id }}</span>
@@ -182,6 +193,7 @@
           <div class="oc-row">
             <span class="oc-k">用户</span>
             <span>{{ o.user_real_name || o.user_nickname || '匿名' }}
+              <span v-if="o.user_age != null" class="tag tag-gray">{{ o.user_age }} 岁</span>
               <span class="muted">{{ o.user_phone || o.user_id }}</span>
             </span>
           </div>
@@ -255,6 +267,14 @@
         </div>
       </div>
     </div>
+
+    <!-- 无限滚动：哨兵进视口即自动续加载，避免一次性渲染上千行 DOM 拖垮弱机器 -->
+    <div class="feed-foot" ref="sentinel">
+      <span v-if="loadingMore" class="feed-loading">加载中…</span>
+      <span v-else-if="!loading && list.length && !hasMore" class="feed-end">
+        没有更多了 · 共 {{ total }} 单
+      </span>
+    </div>
   </div>
 
   <!-- 详情弹窗 -->
@@ -273,7 +293,10 @@
           </div>
           <div class="field">
             <div class="label">商品</div>
-            <div>{{ detail.product_name }} <span class="muted">(#{{ detail.product_id }})</span></div>
+            <div>
+              {{ detail.product_name }} <span class="muted">(#{{ detail.product_id }})</span>
+              <span v-if="detail.sku_name" class="sku-tag">{{ detail.sku_name }}</span>
+            </div>
             <div class="muted">¥{{ fmt(detail.price_per_day) }} × {{ detail.days }} 天</div>
             <div class="muted" v-if="detail.start_date && detail.end_date">
               租期：{{ detail.start_date }} 至 {{ detail.end_date }}
@@ -311,6 +334,7 @@
             <div class="label">用户</div>
             <div>
               {{ detail.user_real_name || detail.user_nickname || '匿名' }}
+              <span v-if="detail.user_age != null" class="tag tag-gray">{{ detail.user_age }} 岁</span>
               <span v-if="detail.user_verified" class="tag tag-green">已实名</span>
             </div>
             <div class="muted">{{ detail.user_phone || '-' }} · ID {{ detail.user_id }}</div>
@@ -319,6 +343,11 @@
             <div class="label">收货</div>
             <div>{{ detail.address_snapshot?.receiver_name }} · {{ detail.address_snapshot?.receiver_phone }}</div>
             <div class="muted">{{ detail.address_snapshot?.full }}</div>
+          </div>
+          <!-- 用户下单时留的话（与下方「工作人员备注」不同，那个用户看不见） -->
+          <div class="field" v-if="detail.user_remark">
+            <div class="label">用户备注</div>
+            <div class="user-remark">{{ detail.user_remark }}</div>
           </div>
           <div class="field" v-if="detail.coupon_name">
             <div class="label">优惠券</div>
@@ -362,9 +391,9 @@
                 <div class="muted small" v-if="detail.item_snapshot.beizhu">备注：{{ detail.item_snapshot.beizhu }}</div>
                 <div class="inv-wenti" v-if="detail.item_snapshot.wenti">⚠️ 问题：{{ detail.item_snapshot.wenti }}</div>
 
-                <!-- 发货时刻的光影租赁记录快照 -->
+                <!-- 光影租赁记录（实时拉取，非发货快照） -->
                 <div class="inv-rents" v-if="detail.item_snapshot.rent_records && detail.item_snapshot.rent_records.length">
-                  <div class="inv-rents-title">租赁记录快照（发货时累计出租 {{ detail.item_snapshot.rent_count || 0 }} 次）</div>
+                  <div class="inv-rents-title">租赁记录（实时 · 累计出租 {{ detail.item_snapshot.rent_count || 0 }} 次）</div>
                   <div class="inv-rent-row" v-for="r in detail.item_snapshot.rent_records" :key="r.id">
                     <span :class="['tag', r.action === 'ship_out' ? (r.pin ? 'tag-red' : 'tag-orange') : 'tag-gray']">{{ rentActionLabel(r.action) }}</span>
                     <span>{{ rentRecordText(r) || '—' }}</span>
@@ -377,7 +406,8 @@
             </div>
             <div v-else>
               <span class="mono">{{ detail.item_huohao }}</span>
-              <span class="muted small" style="margin-left:6px">（发货时未能加载商品快照）</span>
+              <span class="muted small" style="margin-left:6px" v-if="invCardLoading">光影库存加载中…</span>
+              <span class="muted small" style="margin-left:6px" v-else>（光影库存未能实时加载，或货号不存在）</span>
             </div>
           </div>
           <div class="field" v-if="detail.return_logistics_no">
@@ -700,6 +730,10 @@
     <div class="modal" style="max-width:520px">
       <div class="modal-h">发货 · {{ shipForm.oid }}</div>
       <div class="modal-body">
+        <div class="field" v-if="shipForm.userRemark">
+          <div class="label">用户备注</div>
+          <div class="user-remark">{{ shipForm.userRemark }}</div>
+        </div>
         <div class="field">
           <div class="label">运单号</div>
           <input
@@ -860,7 +894,7 @@
 </template>
 
 <script>
-const { ref, reactive, computed, inject, onMounted } = Vue;
+const { ref, reactive, computed, inject, onMounted, onUnmounted, nextTick } = Vue;
 
 const STATUS_LABEL = {
   audit:             '待免押',
@@ -925,8 +959,17 @@ export default {
     const curTab = ref('all');
     const keyword = ref('');
     const statsCount = ref({});
+    // 下滑无限加载：每次取一页 50 条 append 到 list，滑到底自动续。
+    const page = ref(1);
+    const pageSize = ref(50);
+    const total = ref(0);
+    const loadingMore = ref(false);           // 正在加载下一页
+    const hasMore = computed(() => list.value.length < total.value);
+    const sentinel = ref(null);               // 列表底部哨兵，进视口即触发续加载
+    let io = null;                            // IntersectionObserver 实例
 
     const detail = ref(null);
+    const invCardLoading = ref(false);   // 详情页光影卡片异步加载中标志
     const editStatus = ref('');
     const forceStatus = ref(false);
     const saving = ref(false);
@@ -1038,8 +1081,11 @@ export default {
     const rentRecordText = (r) => {
       const parts = [];
       if (r.rent_platform) parts.push(r.rent_platform);
-      if (r.rent_start || r.rent_end) parts.push(`${r.rent_start || '?'} ~ ${r.rent_end || '?'}`);
+      // 光影发货时通常只录到期日、不录起租日，故仅显示到期日避免出现 "? ~"
+      if (r.rent_end) parts.push(`${r.rent_end} 到期`);
+      else if (r.rent_start) parts.push(`${r.rent_start} 起租`);
       if (r.renter_name) parts.push(r.renter_name);
+      if (r.rent_remark) parts.push(r.rent_remark);
       return parts.join(' · ');
     };
 
@@ -1079,23 +1125,85 @@ export default {
       catch (e) { /* 角标拉不到不阻塞主流程 */ }
     };
 
+    // 当前的服务端过滤条件（tab + 关键词）。搜索/筛选一律由后端执行，
+    // 前端只渲染服务端返回的结果，绝不在本地对 list 做二次过滤。
+    const baseParams = () => {
+      const p = {};
+      if (curTab.value !== 'all') p.status = curTab.value;
+      if (keyword.value) p.keyword = keyword.value;
+      return p;
+    };
+
+    // 首屏 / 重新筛选：回到第 1 页，整屏 loading，替换 list。
     const fetch = async () => {
       loading.value = true;
+      page.value = 1;
       try {
-        const params = {};
-        if (curTab.value !== 'all') params.status = curTab.value;
-        if (keyword.value) params.keyword = keyword.value;
-        const r = await api.list('orders', params);
+        const r = await api.list('orders', { ...baseParams(), page: 1, size: pageSize.value });
         list.value = r.list || [];
+        total.value = r.total || 0;
       } catch (e) { alert(e.message || '加载失败'); }
       finally { loading.value = false; }
       fetchStats();
+      fillRentInfo(list.value);   // 异步补光影平台/备注，不阻塞列表显示
+    };
+
+    // 下滑续加载：取下一页 append。用 id 去重，避免期间有新订单插入导致的错位重复。
+    const loadMore = async () => {
+      if (loadingMore.value || loading.value || !hasMore.value) return;
+      loadingMore.value = true;
+      const next = page.value + 1;
+      try {
+        const r = await api.list('orders', { ...baseParams(), page: next, size: pageSize.value });
+        const seen = new Set(list.value.map(o => o.id));
+        const fresh = (r.list || []).filter(o => !seen.has(o.id));
+        list.value.push(...fresh);
+        total.value = r.total || 0;
+        page.value = next;
+        fillRentInfo(fresh);      // 只给新增的行补光影数据
+      } catch (e) { /* 失败不前进页码，下次滑动可重试 */ }
+      finally { loadingMore.value = false; }
+    };
+
+    // 就地刷新已加载的全部行（发货/状态变更/删除等操作后调用）：一次性重拉
+    // 「当前已展示的条数」，不改变滚动位置，不把用户弹回顶部。
+    const reload = async () => {
+      const size = Math.min(500, Math.max(pageSize.value, list.value.length));
+      try {
+        const r = await api.list('orders', { ...baseParams(), page: 1, size });
+        list.value = r.list || [];
+        total.value = r.total || 0;
+        page.value = Math.max(1, Math.ceil(list.value.length / pageSize.value));
+      } catch (e) { /* 保留现有列表 */ }
+      fetchStats();
+      fillRentInfo(list.value);
+    };
+
+    // 搜索：条件变了从头筛（服务端执行），回第 1 页
+    const doSearch = () => { fetch(); };
+
+    // 异步补数：把指定行的货号发给后端拉光影，回来后把平台/备注填进各行。
+    // 只请求 rows 涉及的货号（续加载时就只补新行），但更新一律遍历 list.value，
+    // 通过响应式代理写入才能触发行重渲染。光影慢/挂只影响这两个标签的出现速度。
+    const fillRentInfo = async (rows) => {
+      const target = rows && rows.length ? rows : list.value;
+      const huohaos = [...new Set(
+        target.map(o => (o.item_huohao || '').trim()).filter(Boolean)
+      )];
+      if (!huohaos.length) return;
+      try {
+        const cards = await api.inventoryCards(huohaos);   // { 货号: {..., rent_platform, rent_remark} }
+        for (const o of list.value) {
+          const c = cards[(o.item_huohao || '').trim()];
+          if (c) { o.rent_platform = c.rent_platform || ''; o.rent_remark = c.rent_remark || ''; }
+        }
+      } catch (e) { /* 光影不可用不影响列表 */ }
     };
 
     const switchTab = (k) => {
       if (curTab.value === k) return;
       curTab.value = k;
-      fetch();
+      fetch();               // fetch 内部会回到第 1 页
     };
 
     const resetFilter = () => {
@@ -1119,7 +1227,31 @@ export default {
         loadAlipayDetail();
         loadCharges();
         loadNotes();
+        loadInvCard();   // 异步拉光影商品卡片+租赁记录，不阻塞详情主体渲染
       } catch (e) { alert(e.message || '加载失败'); }
+    };
+
+    // 详情页异步补数：按本单货号拉光影卡片，填入 item_snapshot + 平台/备注。
+    // 光影慢/挂只影响卡片出现速度，详情主体（订单信息）早已渲染。
+    const loadInvCard = async () => {
+      const d = detail.value;
+      const hh = (d && (d.item_huohao || '')).trim();
+      if (!hh) return;
+      invCardLoading.value = true;
+      try {
+        const cards = await api.inventoryCards([hh]);
+        const c = cards[hh];
+        if (detail.value !== d) return;   // 已切换到别的单则丢弃
+        if (c) {
+          detail.value = {
+            ...detail.value,
+            item_snapshot: c,
+            rent_platform: c.rent_platform || '',
+            rent_remark: c.rent_remark || '',
+          };
+        }
+      } catch (e) { /* 光影不可用不影响详情 */ }
+      finally { if (detail.value === d) invCardLoading.value = false; }
     };
 
     // ── 工作人员备注 ──
@@ -1353,7 +1485,7 @@ export default {
           force:  forceStatus.value,
         });
         detail.value = { ...detail.value, ...updated };
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '保存失败'); }
       finally { saving.value = false; }
     };
@@ -1362,6 +1494,8 @@ export default {
     const openShip = async (o) => {
       shipForm.value = {
         oid: o.id,
+        // 用户下单备注：发货前必须看见（"周五后再发"这类要求只能在这一步照做）
+        userRemark: o.user_remark || '',
         no: '',
         detectedCode: '',   // '' | 'SF' | 'JD' | 'unknown'
         detectedName: '',
@@ -1477,7 +1611,7 @@ export default {
         // 后端无论成功失败都返回 code=0，详情字段会带上最新 sync_ok / sync_err
         detail.value = { ...detail.value, ...r };
         // 列表里那一行 sync_ok 也会变；顺便刷新一下
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '同步失败');
       } finally {
@@ -1499,7 +1633,7 @@ export default {
         }
         await api.shipOrder(f.oid, body);
         shipForm.value = null;
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '发货失败');
       } finally {
@@ -1514,7 +1648,7 @@ export default {
       if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？`)) return;
       try {
         await api.update('orders', o.id, { status: act.to });
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '操作失败'); }
     };
 
@@ -1529,7 +1663,7 @@ export default {
       )) return;
       try {
         await api.adminForceCancel(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '取消失败'); }
     };
 
@@ -1541,7 +1675,7 @@ export default {
       if (!confirm(`${userMsg}同意取消订单 ${o.id}？\n将下发解冻请求；支付宝异步确认后订单会自动置为已取消。`)) return;
       try {
         await api.approveOrderCancel(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '同意失败'); }
     };
     const rejectCancel = async (o) => {
@@ -1549,7 +1683,7 @@ export default {
       if (reason === null) return;  // 用户点了取消按钮
       try {
         await api.rejectOrderCancel(o.id, reason);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '驳回失败'); }
     };
 
@@ -1566,7 +1700,7 @@ export default {
       )) return;
       try {
         await api.approveOrderReturn(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '核验失败'); }
     };
     const rejectReturn = async (o) => {
@@ -1574,7 +1708,7 @@ export default {
       if (reason === null) return;
       try {
         await api.rejectOrderReturn(o.id, reason);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '驳回失败'); }
     };
 
@@ -1609,7 +1743,7 @@ export default {
           logistics_no:      f.no,
         });
         adminReturnForm.value = null;
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '提交失败');
       } finally {
@@ -1625,14 +1759,25 @@ export default {
       if (!confirm(tip)) return;
       try {
         await api.remove('orders', o.id, safeDelete ? null : { force: true });
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '删除失败'); }
     };
 
-    onMounted(fetch);
+    // 首屏加载 + 装无限滚动观察器：哨兵进视口（提前 300px）就续加载下一页
+    onMounted(async () => {
+      await fetch();
+      await nextTick();
+      if (sentinel.value && 'IntersectionObserver' in window) {
+        io = new IntersectionObserver((entries) => {
+          if (entries.some(e => e.isIntersecting)) loadMore();
+        }, { rootMargin: '300px' });
+        io.observe(sentinel.value);
+      }
+    });
+    onUnmounted(() => { if (io) { io.disconnect(); io = null; } });
     return {
       list, loading, tabs: TABS, curTab, keyword, statusLabel: STATUS_LABEL,
-      detail, editStatus, forceStatus, saving,
+      detail, invCardLoading, editStatus, forceStatus, saving,
       notes, notesLoading, noteInput, noteSubmitting, loadNotes, submitNote,
       alipay, alipayLoading, loadAlipayDetail, failHeadline,
       charges, chargesLoading, chargeBusy, chargeForm, chargeSubmitting,
@@ -1649,13 +1794,37 @@ export default {
       approveReturn, rejectReturn,
       adminReturnForm, openAdminReturnShip, closeAdminReturnShip, submitAdminReturnShip,
       fmt, onCoverError, statusCls, countOf, actionsFor,
-      fetch, switchTab, resetFilter, openDetail, saveStatus, quickTransition, remove,
+      fetch, doSearch, switchTab, resetFilter, openDetail, saveStatus, quickTransition, remove,
+      total, loadingMore, hasMore, sentinel,
     };
   },
 };
 </script>
 
 <style scoped>
+/* 无限滚动底部：哨兵 + 状态文案 */
+.feed-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 12px 0 4px;
+}
+.feed-loading { font-size: 13px; color: var(--text-2, #6b7280); }
+.feed-loading::before {
+  content: '';
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-right: 8px;
+  border: 2px solid var(--line, #d6dbe3);
+  border-top-color: var(--primary, #2b7cff);
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: feed-spin 0.7s linear infinite;
+}
+@keyframes feed-spin { to { transform: rotate(360deg); } }
+.feed-end { font-size: 12px; color: var(--text-3, #9aa4b2); }
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -1701,6 +1870,18 @@ export default {
   font-size: 13px;
   line-height: 1.4;
   color: var(--text);
+}
+
+/* 用户下单备注：商家需要照做的话，给个浅黄底让它在 grid 里跳出来 */
+.user-remark {
+  background: #fff8e6;
+  border-left: 3px solid var(--warn, #ff8a00);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 详情弹窗「工作人员备注」子区域 */
@@ -1753,6 +1934,21 @@ export default {
   padding: 0 4px;
 }
 .prod-name { font-weight: 500; line-height: 1.45; word-break: break-word; }
+/* 订单里的 SKU 标签：下单时选中的 SKU 名快照 */
+.sku-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: #2f5d9e;
+  background: #eef4ff;
+  border: 1px solid #cfe0ff;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
 .rent-plat {
   display: inline-block;
   margin-top: 4px;
@@ -1764,6 +1960,15 @@ export default {
   border: 1px solid #ffe0b2;
   border-radius: 4px;
   white-space: nowrap;
+}
+
+.rent-remark {
+  display: inline-block;
+  margin-top: 4px;
+  margin-left: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7280;
 }
 
 .strike { text-decoration: line-through; }

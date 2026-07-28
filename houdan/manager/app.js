@@ -52,7 +52,34 @@ const App = {
       location.hash = '/login';
     };
 
-    return { auth, menu: visibleMenu, currentTitle, showChrome, onLogout, companyName, logoUrl, sidebarOpen };
+    // 自助改密：工作人员列表页仅 admin 可进，operator 从这里改自己的密码
+    const pwdModal  = ref(false);
+    const pwdSaving = ref(false);
+    const pwdForm   = ref({ old_password: '', new_password: '', new_password2: '' });
+    const openPwd = () => {
+      pwdForm.value = { old_password: '', new_password: '', new_password2: '' };
+      pwdModal.value = true;
+    };
+    const savePwd = async () => {
+      const f = pwdForm.value;
+      if (!f.old_password) { alert('请输入原密码'); return; }
+      if (!f.new_password || f.new_password.length < 6) { alert('新密码至少 6 位'); return; }
+      if (f.new_password !== f.new_password2) { alert('两次密码不一致'); return; }
+      pwdSaving.value = true;
+      try {
+        await api.changePassword(auth.state.staff.id, f.old_password, f.new_password);
+        pwdModal.value = false;
+        alert('密码已更新，请重新登录');
+        auth.clear();
+        location.hash = '/login';
+      } catch (e) { alert(e.message); }
+      finally { pwdSaving.value = false; }
+    };
+
+    return {
+      auth, menu: visibleMenu, currentTitle, showChrome, onLogout, companyName, logoUrl, sidebarOpen,
+      pwdModal, pwdForm, pwdSaving, openPwd, savePwd,
+    };
   },
   template: `
     <!-- 未登录页（login）不显示侧栏/顶栏 -->
@@ -93,6 +120,7 @@ const App = {
               <strong>{{ auth.state.staff?.real_name || auth.state.staff?.username }}</strong>
               <span class="tag" style="margin-left:6px">{{ auth.state.staff?.role }}</span>
             </span>
+            <button class="btn-link" style="margin-right:12px" @click="openPwd">修改密码</button>
             <button class="btn-link" @click="onLogout">登出</button>
           </div>
         </header>
@@ -100,6 +128,31 @@ const App = {
           <router-view />
         </main>
       </section>
+
+      <!-- 自助改密 -->
+      <div v-if="pwdModal" class="modal-mask" @click.self="pwdModal = false">
+        <div class="modal" style="width:420px">
+          <div class="modal-h">修改我的密码</div>
+          <div class="modal-body">
+            <div class="field">
+              <div class="label">原密码</div>
+              <input class="input" type="password" v-model="pwdForm.old_password" />
+            </div>
+            <div class="field">
+              <div class="label">新密码（至少 6 位）</div>
+              <input class="input" type="password" v-model="pwdForm.new_password" />
+            </div>
+            <div class="field">
+              <div class="label">再次输入新密码</div>
+              <input class="input" type="password" v-model="pwdForm.new_password2" />
+            </div>
+          </div>
+          <div class="modal-f">
+            <button class="btn btn-ghost" @click="pwdModal = false">取消</button>
+            <button class="btn" :disabled="pwdSaving" @click="savePwd">{{ pwdSaving ? '保存中…' : '保存' }}</button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
 };

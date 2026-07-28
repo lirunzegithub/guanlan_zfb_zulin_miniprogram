@@ -4,11 +4,13 @@ import uuid
 from flask import Blueprint, request
 from app.response import ok, fail
 from app.storage.repos import (
-    product_repo, address_repo, order_repo, user_coupon_repo,
+    product_repo, sku_repo, address_repo, order_repo, user_coupon_repo,
 )
 from app.storage.order_ops import update_order
 from app.current_user import current_user_id, current_user
-from app.pricing import calc_amount, normalize_tiers, first_unit_price, substitute_zero_tiers
+from app.pricing import (
+    calc_amount, normalize_tiers, first_unit_price, substitute_zero_tiers, round_yuan,
+)
 from app.coupons import (
     user_coupon_is_usable, applicable_to_amount, calc_discount,
 )
@@ -272,6 +274,9 @@ def create_order():
     start_date = (body.get("start_date") or "").strip()
     end_date   = (body.get("end_date") or "").strip()
     ship_days  = int(body.get("ship_days") or 0)
+    # 用户备注（确认订单页填）：截断到 200 字，避免超长文本撑爆订单列表/详情展示。
+    # 不做内容校验——这是用户写给商家的话，商家自己判断。
+    user_remark = (body.get("user_remark") or "").strip()[:200]
     p = product_repo.get(pid)
     if not p:
         return fail(404, "商品不存在")
@@ -281,24 +286,59 @@ def create_order():
     if (p.get("status") or "") != "on":
         return fail(40023, "该商品已下架，无法下单")
 
+    # SKU 解析：价格 / 押金 / 库存的真相在 SKU 层，正常商品都恒有至少一个 SKU。
+    on_sale_skus = [
+        s for s in sku_repo.list(product_id=p["id"])
+        if (s.get("status") or "on") == "on"
+    ]
+    sku = None
+    if on_sale_skus:
+        raw_sku_id = body.get("sku_id")
+        try:
+            sku_id = int(raw_sku_id or 0)
+        except (TypeError, ValueError):
+            sku_id = 0
+        sku = next((s for s in on_sale_skus if s.get("id") == sku_id), None)
+        if not sku:
+            if len(on_sale_skus) == 1 and not raw_sku_id:
+                # 只有一个 SKU 时价格唯一、不存在歧义 → 不传 sku_id 也放行。
+                # 这条保证了老版本小程序（不认识 SKU）在单 SKU 商品上照常下单。
+                sku = on_sale_skus[0]
+            else:
+                # 多 SKU 却没指定（或指定了不存在的）：宁可报错也不替用户猜，
+                # SKU 之间押金/租金不同，猜错就是按错的价扣钱。
+                return fail(40024, "请选择 SKU 后再下单")
+
+    # 下面这些字段一律从 spec 取：正常是 SKU 行；SKU 被删空的极端情况退回商品行
+    spec = sku or p
+
     # 库存校验：库存 <= 0 禁止下单（后台把库存调 0 即等于下架不可租）
-    if int(p.get("stock") or 0) <= 0:
-        return fail(40022, "该商品库存不足，暂时无法下单")
+    if int(spec.get("stock") or 0) <= 0:
+        return fail(40022, "该 SKU 库存不足，暂时无法下单" if sku else "该商品库存不足，暂时无法下单")
 
     # 押金必填硬约束：避免历史数据漏配押金导致 deposit_freeze=0 让用户白嫖
-    deposit_freeze = float(p.get("deposit_amount") or 0)
+    deposit_freeze = float(spec.get("deposit_amount") or 0)
     if deposit_freeze <= 0:
         return fail(40020, "该商品押金未配置，请联系客服")
 
     uid = current_user_id()
     addr_id = body.get("address_id")
-    addr = address_repo.get(addr_id) if addr_id else _default_address(uid)
+    if addr_id:
+        # 确认订单页会让用户选地址并回传 address_id。它来自客户端，必须校验归属，
+        # 否则传别人的 id 就能把本单的收货快照写成别人的姓名/电话/地址。
+        # 不属于当前用户时直接拒绝，而不是悄悄回落到默认地址——那会让用户
+        # 以为发往 A、实际发往 B。
+        addr = address_repo.get(addr_id)
+        if not addr or addr.get("user_id") != uid:
+            return fail(40002, "收货地址不存在或不属于当前用户")
+    else:
+        addr = _default_address(uid)
     if not addr:
         return fail(40001, "请先添加收货地址")
 
     # 分段租金：用商品当前 price_tiers 计算实付，并把 tiers 快照存进订单，
     # 避免后续运营改价影响历史订单展示与对账。
-    tiers = normalize_tiers(p.get("price_tiers") or [{"from": 1, "price": p.get("price") or 0}])
+    tiers = normalize_tiers(spec.get("price_tiers") or [{"from": 1, "price": p.get("price") or 0}])
     # 零价兜底：与商品详情/列表同口径。allow_zero_rent 关时把 0 档当兜底值计费
     # （防 0 元白嫖）；开时（租押分离）保留 0，允许 0 元租金单。
     from app.settings import get as _setting_get
@@ -337,7 +377,9 @@ def create_order():
         if not applicable_to_amount(used_uc, original_amount):
             return fail(40032, f"订单金额未达到满 {used_uc.get('threshold')} 元门槛")
         discount = calc_discount(used_uc, original_amount)
-        amount = round(max(0.0, original_amount - discount), 2)
+        # 券面额可能带小数（如满 300 减 5.5），扣完再取整一次，
+        # 保证「实付租金」也是整数——这是真正入账、也是用户看到的数
+        amount = round_yuan(max(0.0, original_amount - discount))
         coupon_snapshot.update({
             "coupon_id": int(used_uc.get("coupon_id") or 0),
             "user_coupon_id": used_uc["id"],
@@ -360,6 +402,10 @@ def create_order():
         "user_id": uid,
         "product_id": p["id"],
         "product_name": p["name"],
+        # SKU 快照：sku_id 用于扣库存/对账，sku_name 用于各端展示。
+        # 极端情况（商品一个 SKU 都没有）落 0 / 空串，前端据此不显示 SKU 行。
+        "sku_id":   sku["id"] if sku else 0,
+        "sku_name": (sku.get("name") or "") if sku else "",
         "price_per_day": first_unit_price(tiers),
         "days": days,
         "amount": amount,
@@ -368,6 +414,7 @@ def create_order():
         "start_date": start_date,
         "end_date": end_date,
         "ship_days": ship_days,
+        "user_remark": user_remark,
         "deposit_freeze":        deposit_freeze,
         "freeze_amount":         freeze_amount,
         "freeze_includes_rent":  includes_rent,
@@ -557,8 +604,19 @@ def transition_freeze_done(out_order_no: str) -> dict | None:
     # 放在这个 transition 里而非下单时：① 只有真正免押成功的单才占库存，未完成免押的
     # 不挤占；② 本函数已用 status==audit 做了幂等闸，支付宝重发 freeze 通知不会重复扣。
     # 归还/取消不在此自动加回，由后台人工调整库存（按业务约定）。
+    # 有 SKU 的订单扣 SKU 库存，没有的扣商品库存。两边都走同一个原子条件更新，
+    # 扣不动（余量已为 0）只告警不阻断发货，与改造前行为一致。
+    sku_id = int(o.get("sku_id") or 0)
     pid = o.get("product_id")
-    if pid:
+    if sku_id:
+        left = sku_repo.try_decrement(sku_id, "stock", by=1, floor=0)
+        if left is None:
+            import logging
+            logging.getLogger(__name__).warning(
+                "freeze_done: 订单 %s SKU %s(%s) 免押成功但库存已为 0，未扣减（请后台核对）",
+                oid, sku_id, o.get("sku_name") or "",
+            )
+    elif pid:
         left = product_repo.try_decrement(pid, "stock", by=1, floor=0)
         if left is None:
             import logging

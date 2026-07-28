@@ -18,7 +18,7 @@ import time
 from app.alipay_client import get_client
 from app.config import AlipayConfig
 from app.notify_log import record as notify_record
-from app.storage.repos import order_repo, product_repo
+from app.storage.repos import order_repo, product_repo, sku_repo
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +110,26 @@ def _build_business_info(order: dict) -> dict:
     return info
 
 
-def _product_info(pid) -> tuple[str, str]:
-    """返回 (商品名, image_material_id)。material_id 没上传过则空串占位。"""
+def _item_info(order: dict) -> tuple[str, str]:
+    """返回 (同步给支付宝的商品名, image_material_id)。material_id 没上传过则空串占位。
+
+    有 SKU 的订单：支付宝订单中心只有一个商品名字段，所以把 SKU 名拼进去
+    （"XX相机 128G 深空灰"），否则用户在支付宝端看不出租的是哪一个。
+    素材图优先用 SKU 自己的，没配独立图时回落商品主图。
+    """
+    pid = order.get("product_id")
     if not pid:
         return "租赁商品", ""
     p = product_repo.get(pid) or {}
     name = p.get("name") or "租赁商品"
     material_id = (p.get("alipay_image_material_id") or "").strip()
+
+    if int(order.get("sku_id") or 0):
+        sku_name = (order.get("sku_name") or "").strip()
+        if sku_name:
+            name = f"{name} {sku_name}"
+        s = sku_repo.get(order["sku_id"]) or {}
+        material_id = (s.get("alipay_image_material_id") or "").strip() or material_id
     return name, material_id
 
 
@@ -149,7 +162,7 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
     if not buyer_id:
         return False, "订单缺少 user_id（支付宝 buyer_id）"
 
-    product_name, material_id = _product_info(order.get("product_id"))
+    product_name, material_id = _item_info(order)
     business_info = _build_business_info(order)
     link_page = f"/pages/order-detail/order-detail?id={oid}"
 

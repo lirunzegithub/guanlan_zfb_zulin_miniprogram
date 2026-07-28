@@ -2,12 +2,13 @@
 
   <block a:if="{{list.length > 0}}">
     <block a:for="{{list}}" a:key="id">
-      <view class="addr" data-id="{{item.id}}" onTap="onEdit">
+      <view class="addr {{pick ? 'pickable' : ''}}" data-id="{{item.id}}" onTap="onRowTap">
         <view class="line1">
           <text class="name">{{item.receiver_name}}</text>
           <text class="phone">{{item._phoneMasked}}</text>
           <text a:if="{{item.is_default}}" class="badge default">默认</text>
           <text a:if="{{item.source === 'alipay'}}" class="badge alipay">支付宝</text>
+          <text a:if="{{pick}}" class="pick-hint">点击选择</text>
         </view>
         <view class="addr-detail">{{item.province}} {{item.city}} {{item.district}} {{item.detail}}</view>
         <view class="actions" catchTap="noop">

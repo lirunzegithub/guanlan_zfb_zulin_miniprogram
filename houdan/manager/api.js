@@ -42,12 +42,23 @@ export const api = {
   // 仪表盘
   stats:    () => http.get('/stats'),
 
+  // 统计中心（仅 admin）
+  statsCenter: () => http.get('/stats/center'),
+
   // 通用 CRUD
   list:     (res, params)          => http.get(`/${res}`, params ? { params } : undefined),
   get:      (res, id)              => http.get(`/${res}/${id}`),
-  create:   (res, body)            => http.post(`/${res}`, body),
+  create:   (res, body, params)    => http.post(`/${res}`, body, params ? { params } : undefined),
   update:   (res, id, body)        => http.put(`/${res}/${id}`, body),
   remove:   (res, id, params)      => http.delete(`/${res}/${id}`, params ? { params } : undefined),
+
+  // 型号（SKU）：挂在商品下的子资源
+  listSkus:   (pid)        => http.get(`/products/${pid}/skus`),
+  createSku:  (pid, body)  => http.post(`/products/${pid}/skus`, body),
+  updateSku:  (sid, body)  => http.put(`/skus/${sid}`, body),
+  removeSku:  (sid)        => http.delete(`/skus/${sid}`),
+  // 整个顺序一次性提交（ids 为拖拽后的完整有序 id 列表），小程序端按此顺序展示
+  reorderSkus:(pid, ids)   => http.post(`/products/${pid}/skus/reorder`, { ids }),
 
   // 通知日志
   notifyLogs: (params = {}) => http.get('/notify-logs', { params }),
@@ -66,6 +77,8 @@ export const api = {
   shipOrder: (oid, body) => http.post(`/orders/${oid}/ship`, body),
   // 光影库存系统：按货号查商品卡片（服务端代理）
   inventoryItem: (huohao) => http.get('/inventory/item', { params: { huohao } }),
+  // 光影库存系统：按货号数组批量查卡片（含派生平台/备注），供列表/详情渲染后异步补数
+  inventoryCards: (huohaos) => http.post('/inventory/cards', { huohaos }),
   // 非敏感 UI 标志（货号必填开关、库存对接是否已配置），operator 可读
   uiConfig: () => http.get('/ui-config'),
   // 重试支付宝商家订单同步（alipay.merchant.order.sync）
@@ -123,6 +136,9 @@ export const api = {
 
   // 用户收货地址（用户管理编辑弹窗展示）
   userAddresses: (uid) => http.get(`/users/${uid}/addresses`),
+
+  // 明文身份证号：仅 admin，operator 调用会 403
+  userIdCard: (uid) => http.get(`/users/${uid}/id-card`),
 
   // 文件上传：File/Blob → { url, name, size }
   upload: (file) => {

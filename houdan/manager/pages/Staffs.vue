@@ -28,7 +28,7 @@
           <td><span class="muted">{{ fmtTime(s.last_login_at) }}</span></td>
           <td>
             <button v-if="canEdit(s)" class="btn-link" @click="openEdit(s)">编辑</button>
-            <button class="btn-link" @click="openPwd(s)">改密</button>
+            <button v-if="canEdit(s)" class="btn-link" @click="openPwd(s)">改密</button>
             <button v-if="isAdmin && s.id !== me.id" class="btn-link danger" @click="onDelete(s)">删除</button>
           </td>
         </tr>
@@ -75,12 +75,12 @@
     <div class="modal" style="width:420px">
       <div class="modal-h">修改 {{ pwdModal.username }} 的密码</div>
       <div class="modal-body">
-        <div v-if="pwdSelf" class="field">
+        <div v-if="needOldPwd" class="field">
           <div class="label">原密码</div>
           <input class="input" type="password" v-model="pwdForm.old_password" />
         </div>
         <div v-else class="muted" style="margin-bottom:14px">
-          以 admin 身份代改，无需原密码。
+          {{ pwdSelf ? 'admin 身份改密，无需原密码。' : '以 admin 身份代改，无需原密码。' }}
         </div>
         <div class="field">
           <div class="label">新密码（至少 6 位）</div>
@@ -118,6 +118,8 @@ export default {
     const me = computed(() => auth.state.staff || {});
     const isAdmin = computed(() => me.value.role === 'admin');
     const pwdSelf = computed(() => pwdModal.value && pwdModal.value.id === me.value.id);
+    // admin 改任何账号（含自己）都免原密码，只有普通角色改自己才要填
+    const needOldPwd = computed(() => pwdSelf.value && !isAdmin.value);
 
     const fmtTime = (ts) => {
       if (!ts) return '从未';
@@ -192,7 +194,7 @@ export default {
     return {
       list, loading, me, isAdmin,
       modal, form, saving, openNew, openEdit, save, onDelete, canEdit,
-      pwdModal, pwdForm, pwdSaving, pwdSelf, openPwd, savePwd,
+      pwdModal, pwdForm, pwdSaving, pwdSelf, needOldPwd, openPwd, savePwd,
       fmtTime,
     };
   },

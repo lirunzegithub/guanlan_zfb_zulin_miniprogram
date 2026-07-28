@@ -69,6 +69,9 @@ product_repo = SqliteRepository(
         # 结构 { enabled, title, headers:{type,degree,deprec,insurance}, groups:[{type, rows:[{degree, depreciation, insurance, depreciation_highlight, insurance_highlight}]}], notice }
         "damage_standard": {},
         "shop": {},
+        # SKU 选择行在小程序详情页的标题文案，运营可改成"容量"/"版本"/"成色"等。
+        # 只影响展示；商品有几个 SKU 一律看 sku_repo。
+        "sku_option_name": "SKU",
         "status": "on",
         # 支付宝订单中心商品图素材 ID（通过「上传商品文件」接口获得）
         # alipay.merchant.order.sync 的 item_order_list 必填字段
@@ -78,6 +81,75 @@ product_repo = SqliteRepository(
         "alipay_image_source": "",
     },
 )
+
+# SKU（独立表；按 product_id 反查）
+#
+# 【单一数据源】价格 / 押金 / 库存 / 销量只存在于 SKU 层，商品层不再是真相来源。
+# 每个商品恒定至少有一个 SKU：新建商品时后端自动建「标准版」，存量商品由
+# _backfill_default_skus() 在启动时补建。商品 payload 里同名的老字段只作为
+# 「新建时第一个 SKU 的初始值」和极端兜底，任何下单路径都不再读它们。
+#
+# 为什么不塞进 product.payload 的数组字段：库存扣减用的是 sqlite_store.try_decrement，
+# SQL 里写死 json_set(payload, '$.stock', ...) 的单条件更新来防超卖。若 SKU 存成数组，
+# 路径要变成 '$.skus[i].stock'，而数组下标在增删 SKU 后会移位，并发下可能扣错行。
+# 独立成表后每个 SKU 一行，try_decrement(sku_id, "stock") 原样复用，防超卖保证不打折。
+#
+# 建表由 SqliteRepository.__init__ 的 CREATE TABLE IF NOT EXISTS 完成，
+# 应用启动 import 本模块时自动执行，无需任何迁移脚本。
+sku_repo = SqliteRepository(
+    DB_PATH, "skus",
+    default_fields={
+        "product_id": 0,
+        # SKU 名，如 "128G 深空灰"；同一商品下不允许重名（admin 层校验）
+        "name": "",
+        # SKU 封面：可选。留空则前端回落到商品的 covers[0]
+        "cover_url": "",
+        # 价格 / 押金 / 库存：下单一律以这里为准
+        "price_tiers": [{"from": 1, "price": 20.0}],
+        "min_price": 20.0,        # 由 price_tiers 派生，保存时重算
+        "price_curve": [],        # 同上
+        "deposit_amount": 2000.0,
+        "stock": 0,
+        "sales": 0,
+        "status": "on",           # on 可选 / off 隐藏（不在小程序露出，也不可下单）
+        # 展示顺序：越小越靠前。写进 payload 后由 SqliteRepository 同步到 sort_key 列，
+        # repo.list() 恒按 `sort_key ASC, id ASC` 返回，所以小程序里 SKU 的先后
+        # 完全由后台拖拽决定（见 admin.py 的 skus_reorder）。
+        "sort": 0,
+        # SKU 有独立封面时，素材单独上传一份；留空则同步订单时回落到商品的 material_id
+        "alipay_image_material_id": "",
+        "alipay_image_source": "",
+    },
+)
+
+# 自动补建的第一个 SKU 的名字。单 SKU 商品在小程序不显示选择行，这个名字只在后台可见。
+DEFAULT_SKU_NAME = "标准版"
+
+
+def ensure_default_sku(p: dict) -> dict | None:
+    """商品还一个 SKU 都没有时，用商品级的价格/押金/库存建一条「标准版」。
+
+    已经有 SKU 的商品原样返回 None，因此重复调用安全（启动回填 + 新建商品共用）。
+    """
+    if not p or not p.get("id"):
+        return None
+    if sku_repo.find(product_id=p["id"]):
+        return None
+
+    from app.pricing import normalize_tiers, min_unit_price, derive_price_curve
+    tiers = normalize_tiers(p.get("price_tiers") or [{"from": 1, "price": 20.0}])
+    return sku_repo.create({
+        "product_id":     p["id"],
+        "name":           DEFAULT_SKU_NAME,
+        "cover_url":      "",
+        "price_tiers":    tiers,
+        "min_price":      min_unit_price(tiers),
+        "price_curve":    derive_price_curve(tiers),
+        "deposit_amount": float(p.get("deposit_amount") or 0),
+        "stock":          int(p.get("stock") or 0),
+        "sales":          int(p.get("sales") or 0),
+        "status":         "on",
+    })
 
 # 评论（独立表；按 product_id 反查）
 comment_repo = SqliteRepository(
@@ -116,6 +188,8 @@ order_repo = SqliteRepository(
     default_fields={
         "user_id": "",
         "product_id": 0, "product_name": "",
+        # SKU 快照：历史订单与无 SKU 的极端情况恒为 0 / ""，各端据此决定是否显示 SKU 行
+        "sku_id": 0, "sku_name": "",
         "price_per_day": 0.0, "days": 0,
         # amount = 实付总租金（已扣优惠）；original_amount = 未扣前的总租金
         "amount": 0.0, "original_amount": 0.0,
@@ -125,6 +199,10 @@ order_repo = SqliteRepository(
         "coupon_discount": 0.0, "discount_amount": 0.0,
         "price_tiers": [],
         "start_date": "", "end_date": "", "ship_days": 0,
+        # 用户下单时填的备注（确认订单页「备注」行）。与 order_note_repo 完全不同：
+        # 那个是后台工作人员的审计日志，用户看不见；这个是用户写给商家的，双方可见。
+        # payload 是 JSON blob，老订单没这个 key，读取处一律 .get() 兜底，无需迁移。
+        "user_remark": "",
         "deposit_freeze": 0.0, "credit": False,
         # 该订单"实际向支付宝冻结的总金额"快照（押金 or 押金+租金，下单时按 settings.freeze_includes_rent 算）
         # 下单后写一次就不动；后台改 setting 不影响历史订单
@@ -140,9 +218,8 @@ order_repo = SqliteRepository(
         "logistics_no": "",        # 运单号（已大写 + 去空白）
         "shipped_at": None,
         # 光影库存系统货号绑定：发货时填写（按 settings.ship_huohao_required 决定选填/必填）
-        # item_snapshot = 发货时刻从光影系统拉到的商品卡片快照（不含价格）；拉取失败时为空 dict
+        # 商品卡片/租赁记录不再存快照，展示时按 item_huohao 实时从光影拉取（见 _order_view）
         "item_huohao": "",
-        "item_snapshot": {},
         # 归还物流：用户在 using / return / overdue 状态填写后写入
         # returned_at  = 用户提交寄回信息的 unix 秒（同时即 return_inspecting_at）
         # return_approved_at = 商家点"核验通过"并下发解冻的 unix 秒
@@ -347,6 +424,22 @@ def init_seeds() -> None:
     _backfill_order_freeze_amount()
     # 历史 FAQ 文案升级（仅匹配老种子原文时才动，已被运营编辑过的不动）
     _upgrade_faq_texts()
+    # 单一数据源改造：给还没有 SKU 的存量商品补建「标准版」
+    _backfill_default_skus()
+
+
+def _backfill_default_skus() -> None:
+    """把商品级的价格/押金/库存搬到 SKU 层，保证「每个商品至少一个 SKU」这条不变式。
+
+    幂等：只处理一个 SKU 都没有的商品，所以重启多少次都只补一次；
+    运营后来自己加的 SKU 也不会被这里覆盖。
+    """
+    made = 0
+    for p in product_repo.list():
+        if ensure_default_sku(p):
+            made += 1
+    if made:
+        print(f"[migrate] skus: 已为 {made} 个商品补建默认 SKU（{DEFAULT_SKU_NAME}）", flush=True)
 
 
 def _backfill_order_freeze_amount() -> None:

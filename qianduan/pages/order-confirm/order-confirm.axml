@@ -1,0 +1,293 @@
+<view class="page">
+
+  <!-- 致命错误（商品下架 / 库存不足 / 参数缺失）：只显示原因，不给下单入口 -->
+  <view a:if="{{fatal}}" class="fatal">
+    <view class="fatal-ico">!</view>
+    <text class="fatal-text">{{fatal}}</text>
+  </view>
+
+  <block a:elif="{{loaded}}">
+
+    <!-- 收货地址 -->
+    <view class="card addr-card" onTap="onPickAddress">
+      <block a:if="{{addr}}">
+        <view class="addr-l">
+          <view class="addr-pin"></view>
+          <view class="addr-body">
+            <view class="addr-full">{{addr.province}}-{{addr.city}}-{{addr.district}}-{{addr.detail}}</view>
+            <view class="addr-who">{{addr.receiver_name}} {{addr.receiver_phone}}</view>
+          </view>
+        </view>
+        <text class="arr">›</text>
+      </block>
+      <block a:else>
+        <view class="addr-l">
+          <view class="addr-pin"></view>
+          <view class="addr-body">
+            <view class="addr-full addr-empty">{{addrLoaded ? '添加收货地址' : '地址加载中…'}}</view>
+            <view class="addr-who">下单前请先填写收货信息</view>
+          </view>
+        </view>
+        <text class="arr">›</text>
+      </block>
+    </view>
+
+    <!-- 平台严选条 -->
+    <view class="picked-bar">
+      <text class="picked-brand">平台严选</text>
+      <text class="picked-tags">品质好价 · 芝麻免押 · 顺丰包邮</text>
+    </view>
+
+    <!-- 商品信息 -->
+    <view class="card">
+      <view class="sec-title">商品信息</view>
+      <view class="goods">
+        <image a:if="{{cover}}" class="goods-img" src="{{cover}}" mode="aspectFill" />
+        <view a:else class="goods-img goods-img-ph"></view>
+        <view class="goods-body">
+          <view class="goods-row1">
+            <text class="goods-name">{{p.name}}</text>
+            <text class="goods-qty">x1</text>
+          </view>
+          <view class="goods-sel">
+            已选择：到期可归还/续租<text a:if="{{sku}}">｜{{sku.name}}</text>｜{{rent.rentDays}}天
+          </view>
+          <view class="goods-chips">
+            <text class="g-chip">芝麻信用免押</text>
+            <text class="g-chip">物流期{{rent.shipDays}}天免租</text>
+            <text a:if="{{rent.saved > 0}}" class="g-chip g-chip-hot">长租省¥{{fee.savedText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 备注 -->
+      <view class="remark-row" onTap="openRemark">
+        <text class="remark-label">备注</text>
+        <view class="remark-val">
+          <text class="{{remark ? 'remark-on' : 'remark-ph'}}">{{remark || '建议留言前先与商家沟通确认'}}</text>
+          <text class="arr">›</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 租赁日期时间轴 -->
+    <view a:if="{{timeline}}" class="card">
+      <!-- 天数放标题行，不再做成压在轴线上的徽章：四点等分后中间两点只隔
+           约 160rpx，而「租期共N天」徽章本身就要 156rpx，正好把两个蓝点
+           和中间那段高亮线全盖住，计费区间反而看不见了。 -->
+      <view class="sec-head">
+        <text class="sec-title sec-title--flush">租赁日期</text>
+        <text class="sec-extra">租期共 {{rent.rentDays}} 天</text>
+      </view>
+      <view class="tl">
+        <view class="tl-labels">
+          <text class="tl-lb">签收</text>
+          <text class="tl-lb on">起租日</text>
+          <text class="tl-lb on">到期日</text>
+          <text class="tl-lb">商品归还</text>
+        </view>
+        <view class="tl-track">
+          <view class="tl-line"></view>
+          <view class="tl-line-on"></view>
+          <view class="tl-dot" style="left:12.5%"></view>
+          <view class="tl-dot on" style="left:37.5%"></view>
+          <view class="tl-dot on" style="left:62.5%"></view>
+          <view class="tl-dot" style="left:87.5%"></view>
+        </view>
+        <view class="tl-dates">
+          <text class="tl-dt">{{timeline.receive}}</text>
+          <text class="tl-dt on">{{timeline.rentStart}}</text>
+          <text class="tl-dt on">{{timeline.expire}}</text>
+          <text class="tl-dt">{{timeline.giveBack}}</text>
+        </view>
+      </view>
+      <view class="tl-note">前 {{rent.shipDays}} 天为物流期，不计租金；归还日当天寄回即可</view>
+    </view>
+
+    <!-- 租金与押金分成两张卡，各自结算，绝不合并成一个数字：
+         押金是预授权冻结、不实际扣款，跟租金加在一起显示会让用户误以为
+         下单就要真掏这么多钱。底部按钮旁展示的也只有租金。 -->
+    <view class="card">
+      <view class="sec-head">
+        <text class="sec-title sec-title--flush">实付租金</text>
+        <text class="sec-amt">¥{{fee.payRentText}}</text>
+      </view>
+      <view class="fee-box">
+        <!-- 不列分段计算过程：那是定价规则，用户在这一步只关心最终多少钱。
+             长租阶梯已经在详情页的租期档位上体现过了。 -->
+        <view class="fee-row">
+          <text class="fee-k">总租金（{{rent.rentDays}}天）</text>
+          <text class="fee-v">¥{{fee.rentText}}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-k">运费</text>
+          <text class="fee-v">包邮</text>
+        </view>
+        <view class="fee-row" onTap="openCouponSheet">
+          <text class="fee-k">优惠券</text>
+          <view class="fee-v-wrap">
+            <text a:if="{{pickedCoupon.id}}" class="fee-v fee-v-cut">-¥{{pickedCoupon.discountText}}</text>
+            <text a:elif="{{couponList.length > 0}}" class="fee-v fee-v-tip">{{couponList.length}} 张可用</text>
+            <text a:else class="fee-v fee-v-mute">无可用</text>
+            <text class="arr">›</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="sec-head">
+        <text class="sec-title sec-title--flush">押金</text>
+        <!-- 这里写"冻结"而不是"实付"：能否免押要等支付宝返回芝麻信用结果，
+             下单前谁也不知道，不能提前承诺 ¥0 -->
+        <text class="sec-amt sec-amt--sub">冻结 ¥{{fee.depositText}}</text>
+      </view>
+      <view class="fee-box">
+        <view class="fee-row">
+          <text class="fee-k">总押金</text>
+          <text class="fee-v">¥{{fee.depositText}}</text>
+        </view>
+        <view class="fee-row">
+          <view class="fee-k-brand">
+            <image class="fee-k-logo" src="/images/zmxy-logo.png" mode="aspectFit" />
+            <text class="fee-k-zmxy">芝麻信用｜免押金</text>
+          </view>
+          <text class="fee-v fee-v-cut">达标可免</text>
+        </view>
+      </view>
+      <view class="fee-note">{{depositNote}}</view>
+    </view>
+
+    <!-- 协议 -->
+    <view class="agree-row">
+      <view class="agree-check {{agreed ? 'on' : ''}}" onTap="toggleAgree"></view>
+      <text class="agree-text" onTap="toggleAgree">我已阅读并同意</text>
+      <text class="agree-link" onTap="openAgreement">《租赁服务协议及相关》</text>
+    </view>
+
+    <view style="height:200rpx"></view>
+
+    <!-- 底部下单条 -->
+    <view class="bottom-bar safe-bottom">
+      <view class="bb-l" onTap="toggleFeeSheet">
+        <view class="bb-amt">
+          <text class="bb-amt-label">实付租金</text>
+          <text class="bb-amt-cny">¥</text>
+          <text class="bb-amt-num">{{fee.payRentText}}</text>
+          <!-- 箭头用 CSS 画：字符 ⌄ 在 baseline 对齐下会掉到数字下方 -->
+          <view class="bb-caret {{feeSheet ? 'up' : ''}}"></view>
+        </view>
+        <text class="bb-sub">另冻结押金 ¥{{fee.depositText}}，达标免押</text>
+      </view>
+      <view class="bb-submit {{submitting ? 'is-busy' : ''}}" onTap="onSubmit">
+        {{submitting ? '提交中…' : '确认下单'}}
+      </view>
+    </view>
+
+    <!-- 底部明细展开层 -->
+    <view a:if="{{feeSheet}}" class="mask" onTap="closeFeeSheet">
+      <view class="fee-pop safe-bottom" catchTap="noop">
+        <view class="pop-h">
+          <text class="pop-title">费用明细</text>
+          <text class="pop-close" onTap="closeFeeSheet">×</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-k">总租金</text>
+          <text class="fee-v">¥{{fee.rentText}}</text>
+        </view>
+        <view a:if="{{pickedCoupon.id}}" class="fee-row">
+          <text class="fee-k">优惠券抵扣</text>
+          <text class="fee-v fee-v-cut">-¥{{fee.discountText}}</text>
+        </view>
+        <view class="fee-row">
+          <text class="fee-k">运费</text>
+          <text class="fee-v">包邮</text>
+        </view>
+        <view class="fee-total">
+          <text class="fee-total-k">实付租金</text>
+          <text class="fee-total-v">¥{{fee.payRentText}}</text>
+        </view>
+        <view class="fee-row fee-row-dep">
+          <text class="fee-k">押金（预授权冻结，不扣款）</text>
+          <text class="fee-v">¥{{fee.depositText}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 优惠券选择 -->
+    <view a:if="{{couponSheet}}" class="mask" onTap="closeCouponSheet">
+      <view class="pop safe-bottom" catchTap="noop">
+        <view class="pop-h">
+          <text class="pop-title">选择优惠券</text>
+          <text class="pop-close" onTap="closeCouponSheet">×</text>
+        </view>
+        <scroll-view class="cp-list" scroll-y>
+          <view class="cp-item {{pickedCoupon.id ? '' : 'on'}}" onTap="onUnpickCoupon">
+            <view class="cp-l">不使用优惠券</view>
+            <view class="cp-radio {{pickedCoupon.id ? '' : 'on'}}"></view>
+          </view>
+          <block a:for="{{couponList}}" a:key="id">
+            <view
+              class="cp-item {{pickedCoupon.id === item.id ? 'on' : ''}}"
+              data-id="{{item.id}}"
+              onTap="onPickCoupon">
+              <view class="cp-l">
+                <view class="cp-name">- ¥{{item.discountText}} {{item.name}}</view>
+                <view class="cp-meta">满 ¥{{item.thresholdText}} 可用</view>
+              </view>
+              <view class="cp-radio {{pickedCoupon.id === item.id ? 'on' : ''}}"></view>
+            </view>
+          </block>
+        </scroll-view>
+      </view>
+    </view>
+
+    <!-- 未勾协议就点下单：弹窗确认，而不是抖一下协议行。
+         抖动只是提示"你还没勾"，用户还得自己滑回去找那一行；
+         弹窗把协议和行动按钮放在一起，点「同意并下单」即视为勾选并继续。 -->
+    <view a:if="{{agreeSheet}}" class="mask" onTap="closeAgreeSheet">
+      <view class="agree-pop safe-bottom" catchTap="noop">
+        <view class="agree-pop-h">
+          <text class="agree-pop-title">请确认租赁协议</text>
+          <text class="agree-pop-close" onTap="closeAgreeSheet">×</text>
+        </view>
+        <view class="agree-pop-body">
+          <text class="agree-pop-text">阅读并同意</text>
+          <text class="agree-pop-link" onTap="openAgreement">《租赁服务协议及相关》</text>
+        </view>
+        <view class="agree-pop-foot">
+          <view class="agree-pop-btn ghost" onTap="closeAgreeSheet">取消</view>
+          <view class="agree-pop-btn main {{submitting ? 'is-busy' : ''}}" onTap="onAgreeAndSubmit">
+            {{submitting ? '提交中…' : '同意并下单'}}
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 备注输入 -->
+    <view a:if="{{remarkSheet}}" class="mask" onTap="closeRemark">
+      <view class="remark-pop safe-bottom" catchTap="noop">
+        <view class="remark-h">
+          <text class="remark-title">订单备注</text>
+          <text class="remark-close" onTap="closeRemark">×</text>
+        </view>
+        <!-- 输入区与字数同处一个灰底块内，字数贴右下角 -->
+        <view class="remark-box">
+          <textarea
+            class="remark-input"
+            value="{{remarkDraft}}"
+            maxlength="200"
+            placeholder="选填，请先和商家协商一致，付款后商家可见"
+            placeholder-class="remark-ph-cls"
+            onInput="onRemarkInput"
+          />
+          <text class="remark-count">{{remarkDraft.length}}/200</text>
+        </view>
+        <view class="remark-foot">
+          <view class="remark-save" onTap="saveRemark">确定</view>
+        </view>
+      </view>
+    </view>
+
+  </block>
+</view>

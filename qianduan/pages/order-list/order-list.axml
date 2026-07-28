@@ -35,7 +35,10 @@
             </block>
           </view>
           <view class="o-info">
-            <view class="o-name">{{item.product_name}}</view>
+            <view class="o-name">
+              {{item.product_name}}
+              <text a:if="{{item.sku_name}}" class="o-sku">{{item.sku_name}}</text>
+            </view>
             <view class="o-meta">租期：{{item._startDate}} ~ {{item._endDate}}</view>
             <view class="o-amount">¥{{item._amountText}} 元</view>
           </view>

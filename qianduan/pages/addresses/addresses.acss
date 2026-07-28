@@ -6,6 +6,15 @@
   padding: 24rpx 28rpx;
   margin-bottom: 16rpx;
 }
+/* 选择模式：整行可点，给一条左侧色条暗示"这行是个按钮" */
+.addr.pickable { border-left: 6rpx solid var(--primary); }
+.pick-hint {
+  margin-left: auto;
+  font-size: 20rpx; color: var(--primary);
+  background: var(--primary-soft);
+  padding: 2rpx 12rpx; border-radius: 6rpx;
+}
+
 .line1 { display: flex; align-items: center; gap: 16rpx; margin-bottom: 12rpx; }
 .name  { font-size: 30rpx; color: #1a1f2e; font-weight: 700; }
 .phone { font-size: 26rpx; color: #4a5060; }

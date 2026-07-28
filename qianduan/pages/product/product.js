@@ -1,11 +1,10 @@
 const { get, post, request, BASE_URL } = require('../../utils/request.js');
-const requireRealName = require('../../utils/realname.js');
 const requireLogin = require('../../utils/login.js');
+// 计价 / 日期工具集中在 utils/pricing.js：本页（选租期）和确认订单页（算实付）
+// 必须用同一份算法，否则两页显示的金额会对不上。
+const pricing = require('../../utils/pricing.js');
 
-function fmtAmount(n) {
-  const v = Number(n) || 0;
-  return Math.abs(v - Math.round(v)) < 0.005 ? String(Math.round(v)) : v.toFixed(2);
-}
+const fmtAmount = pricing.fmtAmount;
 
 /** 归一化 onLoad 参数：兼容两种入口
  *  ① 普通跳转：q = { id, days, review }
@@ -34,39 +33,37 @@ function _normalizeQuery(q) {
 Page({
   data: {
     p: {},
-    agreed: false,
-    agreeShake: false,            // 协议行抖动提醒开关（未勾协议点下单时触发）
-    curvePts: [],
-    curveSegs: [],
-    yTicks: [],
-    // 分段租金可读文案：把 price_tiers 翻成 "第 1-6 天 ¥75/天" 这种行，
-    // loadDetail 拿到 p 后一次性算好，axml 直接列表渲染。
-    tierTexts: [],
-    tip: { show: false, index: -1, day: 0, price: 0, x: 0, y: 0 },
+    // SKU：后端只返回在售的。价格/押金/库存的真相都在这里，商品级同名字段只是兜底。
+    // 只有 1 个时不渲染选择行（没得选），但下单照样带它的 sku_id。
+    skus: [],
+    skuIndex: 0,                 // 当前选中 SKU 在 skus 里的下标
+    skuOptionName: 'SKU',        // 选择行标题，后台可改（如"容量"/"版本"/"成色"）
     commentModal: false,
     cmtSubmitting: false,
     cmtUploading: false,
     cmtForm: { stars: 5, content: '', images: [] },
 
     // 详情页展示的活动满减券（公共接口；含当前用户领取状态）
+    // 只做营销展示与领取入口；「用哪张券」是确认订单页的事。
     coupons: [],
 
-    // 租期抽屉里的优惠券选择
-    couponMatchList: [],          // 当前金额下我的可用券（已带 discount_amount）
-    pickedCoupon: {},             // 用户选中的那张；空 = 不使用
-    couponSheet: false,           // 选券抽屉
-
-    // 租期选择抽屉（日历版）
+    // 规格 + 租期选择抽屉（日历版）
     rentSheet: false,
+    // 日历是否展开：默认收起，点「自选租期」才出现。
+    // 绝大多数用户用快捷天数就够了，日历常驻会把抽屉撑满、把规格挤出视野。
+    calOpen: false,
     allowManualPick: true,       // 是否允许日历手选（运营在后台「系统设置」控制）
     SHIP_DAYS: 3,                // 物流期：起租日起前 3 天免租
     MIN_RENT_DAYS: 3,            // 最少用机天数（不含物流期）
-    CAL_MONTHS: 4,               // 日历展示月份数（至少要覆盖 90 天预设）
+    CAL_MONTHS: 4,               // 日历展示月份数（快捷档位最长 30 天，留足余量给自选租期）
     DEFAULT_RENT_DAYS: 15,       // 抽屉默认预选用机天数
     weekLabels: ['日', '一', '二', '三', '四', '五', '六'],
     calMonths: [],               // [{label, weeks: [[{day, ymd, status, priceText, isShip}, ...7], ...6]}]
     // 顶部快捷天数（用机天数；不含物流期）
-    rentPresets: [3, 7, 10, 15, 20, 30, 60, 90],
+    // 快捷租期档位。必须与后台 Products.vue 的 PREVIEW_DAYS 一致：
+    // 后台按这些档位填总价反推各段单价，档位对不上会出现「后台定了价、
+    // 用户却选不到那个天数」。更长的租期走「自选租期」日历。
+    rentPresets: [3, 7, 10, 15, 20, 30],
     activePreset: 15,
     // 扫小程序码带来的预选租期天数（0 = 无预选，用 DEFAULT_RENT_DAYS）
     // 必须在 data 里，让框架托管生命周期 + setData 反应式；写在实例属性上
@@ -109,8 +106,6 @@ Page({
     this.loadDetail(id);
     this.loadCoupons();
     this.loadConfig();
-    // 合规要求：协议勾选每次进入都必须未勾选，由用户当次主动勾选。
-    // 不再读 storage 自动回填，data.agreed 保持初始 false。
     // 从订单详情「去评价」跳过来：?review=1 → 详情拉完后自动打开评价弹层
     if (nq.review === '1') this._autoOpenReview = true;
     // 扫小程序码带租期进来：?days=N → 仅"预选"，不自动弹抽屉
@@ -164,23 +159,6 @@ Page({
     } catch (err) {}
   },
 
-  toggleAgree() {
-    // 仅切换内存中的勾选状态；不写入 storage，避免下次进入自动勾选触发审核驳回
-    this.setData({ agreed: !this.data.agreed });
-  },
-
-  /** 未勾协议就下单时：抖动协议行引导勾选（替代打断式弹窗）。
-   *  先复位 false 再置 true，保证连点能重复触发动画。 */
-  _shakeAgree() {
-    if (this._agreeShakeTimer) clearTimeout(this._agreeShakeTimer);
-    this.setData({ agreeShake: false }, () => {
-      this.setData({ agreeShake: true });
-      this._agreeShakeTimer = setTimeout(() => {
-        this.setData({ agreeShake: false });
-        this._agreeShakeTimer = null;
-      }, 600);
-    });
-  },
   openAgreement() {
     my.navigateTo({ url: '/pages/agreement/agreement' });
   },
@@ -200,9 +178,21 @@ Page({
         const sys = my.getSystemInfoSync();
         this._detailContainerW = Math.floor(Number(sys.windowWidth) || 0);
       } catch (e) { this._detailContainerW = 0; }
-      const tierTexts = this._buildTierTexts(p && p.price_tiers);
+      // 默认选中第一个有货的 SKU；全都没货就选第一个（底部按钮会显示"已租罄"）
+      const skus = Array.isArray(p.skus) ? p.skus : [];
+      this._baseProduct = p;
+      const firstIdx = skus.length
+        ? Math.max(0, skus.findIndex((s) => (s.stock || 0) > 0))
+        : 0;
+      const merged = this._mergeSku(p, skus[firstIdx]);
       const damageStandard = this._buildDamageStandard(p && p.damage_standard);
-      this.setData({ p, tierTexts, damageStandard }, () => this._buildCurve());
+      this.setData({
+        p: merged,
+        skus,
+        skuIndex: firstIdx,
+        skuOptionName: (p.sku_option_name || 'SKU'),
+        damageStandard,
+      });
       // 顺手把分享卡片预加载好，onShareAppMessage 必须同步返回，需要这份缓存
       this._preloadShare(id);
       // 订单详情「去评价」跳过来的，详情拉完后自动弹评价
@@ -211,7 +201,7 @@ Page({
         this.openCommentModal();
       }
       // 扫码带租期进来的：把预选值写进响应式 data（不再自动弹抽屉）
-      // 用户点立即租赁时，_pickDays 读这个值预选 N 天
+      // 用户点「去免押租」时，_openRentSheet 读这个值预选 N 天
       if (this._pendingPreferred > 0) {
         this.setData({ preferredRentDays: this._pendingPreferred });
         this._pendingPreferred = 0;
@@ -234,38 +224,6 @@ Page({
     const imgs = (this.data.p && this.data.p.detail_images) || [];
     if (!imgs[i] || imgs[i].height === h) return;
     this.setData({ [`p.detail_images[${i}].height`]: h });
-  },
-
-  /** price_tiers → 详情页可读行：
-   *    [{from:1,price:75},{from:7,price:40}]
-   *      → [
-   *          {from:1, label:"第 1-6 天", price:75},
-   *          {from:7, label:"第 7 天起", price:40},
-   *        ]
-   *  只剩一段时直接 "全程 ¥X/天"。
-   */
-  _buildTierTexts(tiers) {
-    if (!Array.isArray(tiers) || !tiers.length) return [];
-    const segs = tiers
-      .filter(t => t && Number.isFinite(Number(t.from)))
-      .slice()
-      .sort((a, b) => Number(a.from) - Number(b.from));
-    if (!segs.length) return [];
-    if (segs.length === 1) {
-      return [{
-        from: Number(segs[0].from),
-        price: Number(segs[0].price) || 0,
-        label: '全程',
-      }];
-    }
-    return segs.map((seg, i) => {
-      const from = Number(seg.from);
-      const next = segs[i + 1];
-      const label = next
-        ? `第 ${from}-${Number(next.from) - 1} 天`
-        : `第 ${from} 天起`;
-      return { from, price: Number(seg.price) || 0, label };
-    });
   },
 
   /** 后台 damage_standard → 详情页可直接渲染的视图模型。
@@ -311,175 +269,50 @@ Page({
       this._shareInfo = null;
     }
   },
-  /** 把 price_curve 映射为点位 + 相邻点之间的直线段（折线图）。
-   *  Y 轴范围按当前 price 自适应；X 轴等距。
-   *  线段需要容器实际像素尺寸来算长度/角度，所以两阶段 setData：
-   *    1) 立刻写点和 Y 轴刻度（页面先出现网格 + 圆点）
-   *    2) 异步查 .chart-area 尺寸后再写 curveSegs（线段铺上去）
-   */
-  _buildCurve() {
-    const pts = (this.data.p && this.data.p.price_curve) || [];
-    if (!pts.length) {
-      this.setData({ curvePts: [], curveSegs: [], yTicks: [] });
-      return;
-    }
-
-    // 动态 Y 轴：上下取整 + 让 span 是 4 的倍数，保证 5 个等距刻度全部为整数
-    const prices = pts.map(p => Number(p.price) || 0);
-    const ymax = Math.max(...prices);
-    const ymin = Math.min(...prices);
-    const pad = Math.max(1, Math.ceil((ymax - ymin) * 0.15));
-    let yhi = Math.ceil(ymax + pad);
-    let ylo = Math.max(0, Math.floor(ymin - pad));
-    let span = yhi - ylo;
-    const remainder = span % 4;
-    if (remainder !== 0) {
-      yhi += 4 - remainder;
-      span = yhi - ylo;
-    }
-    if (span === 0) { yhi = ylo + 4; span = 4; }
-
-    // X 轴按 day 真实位置定位：1 → 0%，30 → 100%
-    const dayMin = 1;
-    const dayMax = 30;
-    const xspan = dayMax - dayMin || 1;
-    const dots = pts.map((pt) => ({
-      day: pt.day,
-      price: pt.price,
-      x: Math.max(0, Math.min(100, (Number(pt.day) - dayMin) / xspan * 100)),
-      y: Math.max(0, Math.min(100, ((Number(pt.price) || 0) - ylo) / span * 100)),
-    }));
-
-    // Y 轴 5 刻度（自下而上），均为整数
-    const yStep = span / 4;
-    const yTicks = [ylo, ylo + yStep, ylo + yStep * 2, ylo + yStep * 3, yhi];
-
-    // 先把点和 Y 轴写上（DOM 出现 .chart-area），回调里再量尺寸算线段；同时清空残留 tip
-    this.setData({
-      curvePts: dots,
-      curveSegs: [],
-      yTicks,
-      tip: { show: false, index: -1, day: 0, price: 0, x: 0, y: 0 },
-    }, () => {
-      my.createSelectorQuery()
-        .select('.chart-area')
-        .boundingClientRect()
-        .exec((res) => {
-          const rect = res && res[0];
-          if (!rect || !rect.width || !rect.height) return;
-          const W = rect.width;
-          const H = rect.height;
-          const segs = [];
-          for (let i = 0; i < dots.length - 1; i++) {
-            const dxPx = (dots[i + 1].x - dots[i].x) / 100 * W;
-            const dyPx = (dots[i + 1].y - dots[i].y) / 100 * H; // y 是 bottom%
-            const len = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
-            // bottom 坐标系：y 向上为正；CSS 旋转顺时针为正 → 用 -dy
-            const angle = Math.atan2(-dyPx, dxPx) * 180 / Math.PI;
-            segs.push({
-              left: dots[i].x,
-              bottom: dots[i].y,
-              length: len,
-              angle,
-            });
-          }
-          this.setData({ curveSegs: segs });
-        });
-    });
-  },
-  /** 点击 dot：切换显示 tooltip（同一个 dot 再点一次收起） */
-  onDotTap(e) {
-    const i = parseInt(e.currentTarget.dataset.i, 10);
-    const pt = (this.data.curvePts || [])[i];
-    if (!pt) return;
-    if (this.data.tip.show && this.data.tip.index === i) {
-      this.setData({ tip: { show: false, index: -1, day: 0, price: 0, x: 0, y: 0 } });
-      return;
-    }
-    this.setData({
-      tip: {
-        show: true,
-        index: i,
-        day: pt.day,
-        price: pt.price,
-        x: pt.x,
-        y: pt.y,
-      },
-    });
-  },
   onSpec() {
     my.showToast({ content: '规格选择', type: 'none' });
   },
-  async onRent() {
+  /** 「去免押租」：只做本页能立刻判定的拦截（下架 / 无货），然后打开规格+租期抽屉。
+   *  登录 / 实名 / 地址 / 协议全部下沉到确认订单页 —— 让用户先看清价格再被要求登录，
+   *  少一层打断。这些校验后端建单时也各兜一层，前端放行不等于能下单成功。 */
+  onRent() {
     const pid = this.data.p.id;
     if (!pid) return;
 
-    // ⓪ 上架 + 库存校验（后端也会各兜一层）：下架优先于库存
+    // 下架优先于库存
     if ((this.data.p.status || 'on') !== 'on') {
       my.showToast({ content: '该商品已下架，无法下单', type: 'none' });
       return;
     }
+    // p.stock 已经是"选中 SKU 的库存"（见 _mergeSku）
     if (!((this.data.p.stock || 0) > 0)) {
-      my.showToast({ content: '该商品库存不足，暂时无法下单', type: 'none' });
+      my.showToast({
+        content: (this.data.skus || []).length > 1
+          ? `该${this.data.skuOptionName}库存不足，请换一个`
+          : '该商品库存不足，暂时无法下单',
+        type: 'none',
+      });
       return;
     }
-    // ① 协议拦截：不弹窗，改为抖动协议行 + 复选框高亮，引导用户去勾选
-    if (!this.data.agreed) {
-      this._shakeAgree();
-      return;
-    }
-    // ② 登录 / 实名 / 地址
-    if (!(await this._ensureCheckoutReady())) return;
-    // ③ 选租期（日历）
-    const sel = await this._pickDays();
-    if (!sel) return;
-    // ④ 建单
-    await this._createOrder(pid, sel);
+    this._openRentSheet();
   },
 
-  // 登录 + 实名 + 地址 三连校验；全过返回 true，任一不满足就引导并返回 false
-  async _ensureCheckoutReady() {
-    if (!(await requireLogin('下单需要先登录'))) return false;
-    if (!(await requireRealName())) return false;
-    let addrs = { list: [] };
-    try {
-      addrs = await get('/api/user/addresses', {}, { hideError: true });
-    } catch (e) {}
-    if (!addrs || !addrs.list || addrs.list.length === 0) {
-      my.confirm({
-        title: '需要收货地址',
-        content: '下单前请先添加一个收货地址',
-        confirmButtonText: '去添加',
-        cancelButtonText: '稍后',
-        success: (r) => { if (r.confirm) my.navigateTo({ url: '/pages/address-edit/address-edit' }); },
-      });
-      return false;
-    }
-    return true;
-  },
-
-  // 创建订单 → 跳详情页自动唤起 my.tradePay
-  async _createOrder(pid, sel) {
-    my.showLoading({ content: '下单中', mask: true });
-    try {
-      const payload = {
-        product_id: pid,
-        days: sel.days,
-        start_date: sel.startDate,
-        end_date: sel.endDate,
-        ship_days: sel.shipDays,
-      };
-      if (sel.userCouponId) payload.user_coupon_id = sel.userCouponId;
-      const o = await post('/api/orders', payload);
-      // 下单成功，清掉扫码带来的预选租期（下次进入用默认）
-      if (this.data.preferredRentDays) this.setData({ preferredRentDays: 0 });
-      my.hideLoading();
-      my.navigateTo({
-        url: `/pages/order-detail/order-detail?id=${o.id}&credit=1`,
-      });
-    } catch (e) {
-      my.hideLoading();
-    }
+  /** 抽屉点「确认」后：把选定的规格 + 租期交给确认订单页。
+   *  只传轻量标识和日期，价格由确认页按现价重新计算（防止抽屉停留期间改价）。 */
+  _gotoConfirm(sel) {
+    const pid = this.data.p.id;
+    const curSku = (this.data.skus || [])[this.data.skuIndex];
+    const q = [
+      `product_id=${pid}`,
+      `sku_id=${curSku ? curSku.id : 0}`,
+      `start_date=${sel.startDate}`,
+      `end_date=${sel.endDate}`,
+      `ship_days=${sel.shipDays}`,
+      `days=${sel.days}`,
+    ].join('&');
+    // 扫码带来的预选租期是一次性的，用过即清（下次进入回到默认天数）
+    if (this.data.preferredRentDays) this.setData({ preferredRentDays: 0 });
+    my.navigateTo({ url: `/pages/order-confirm/order-confirm?${q}` });
   },
 
   // ---------- 评价 ----------
@@ -1037,96 +870,41 @@ Page({
     }
   },
 
-  // ---------- 租期选择（日历抽屉） ----------
+  // ---------- 规格 + 租期选择（日历抽屉） ----------
   /** 打开抽屉：渲染日历 + 默认按 DEFAULT_RENT_DAYS 天预选。
-   *  返回 { days, startDate, endDate, shipDays, rentDays, total, userCouponId } */
-  _pickDays() {
+   *  抽屉只负责「选」，选完把结果交给确认订单页，不在这里建单、不在这里选券。 */
+  _openRentSheet() {
     const p = this.data.p || {};
     // 扫码带来的预选租期优先（在 data 里，跨 await 不丢）；否则用默认天数
     const def = this.data.preferredRentDays || this.data.DEFAULT_RENT_DAYS;
     const sel = this._rangeForRentDays(def);
-    const rent = this._calcRent(sel.start, sel.end, p);
     this.setData({
       rentSheet: true,
-      rent,
+      calOpen: false,               // 每次打开都从"快捷天数"态开始
+      rent: this._calcRent(sel.start, sel.end, p),
       activePreset: def,
       calMonths: this._buildCalendar(p, sel.start, sel.end),
-      pickedCoupon: {},
-      couponMatchList: [],
-    }, () => this._refreshCoupons());
-    return new Promise((resolve) => {
-      this._rentResolve = resolve;
     });
   },
 
-  /** 拉取当前金额下的可用券；并对已选券做有效性兜底（金额变化可能让原选的失效）。
-   *  会把抵扣后的 final 写到 rent.finalText（不破坏 rent.total 这个原价字段）。 */
-  async _refreshCoupons() {
-    const amount = (this.data.rent && this.data.rent.total) || 0;
-    if (!amount) {
-      this.setData({ couponMatchList: [], pickedCoupon: {}, 'rent.finalText': '' });
+  /** 「自选租期」：展开 / 收起日历。
+   *  展开时取消快捷天数的高亮，让用户清楚当前是在手选区间。
+   *  运营关掉手选时日历只读，天数仍由快捷条决定，所以保留原高亮不清。 */
+  onCustomRange() {
+    if (this.data.calOpen) {
+      this.setData({ calOpen: false });
       return;
     }
-    let list = [];
-    try {
-      const r = await get('/api/user/coupons/match', { amount }, { hideError: true });
-      list = (r && r.list ? r.list : []).map((it) => ({
-        ...it,
-        thresholdText: fmtAmount(it.threshold),
-        discountText: fmtAmount(it.discount_amount || it.discount),
-      }));
-    } catch (e) { list = []; }
-
-    // 自动选最高抵扣：仅在用户没主动选过、且当前没指定时才挑（避免覆盖用户选择）
-    let picked = this.data.pickedCoupon || {};
-    if (picked.id) {
-      const still = list.find((x) => x.id === picked.id);
-      picked = still ? { ...still } : {};
-    } else if (list.length) {
-      picked = { ...list[0] };
-    }
-    this._applyFinal(amount, picked);
-    this.setData({ couponMatchList: list, pickedCoupon: picked });
-  },
-
-  /** 计算抵扣后的 finalText 并写回 rent.finalText（前端展示用；后端会重新校验） */
-  _applyFinal(amount, picked) {
-    const off = (picked && picked.discount_amount) || 0;
-    const final = Math.max(0, Math.round((amount - off) * 100) / 100);
-    this.setData({ 'rent.finalText': fmtAmount(final) });
-  },
-
-  /** 打开 / 关闭选券抽屉 */
-  openCouponPicker() {
-    if (!this.data.couponMatchList.length) {
-      my.showToast({ content: '当前订单暂无可用优惠券', type: 'none' });
-      return;
-    }
-    this.setData({ couponSheet: true });
-  },
-  closeCouponPicker() { this.setData({ couponSheet: false }); },
-  onPickCoupon(e) {
-    const id = parseInt(e.currentTarget.dataset.id, 10);
-    const item = this.data.couponMatchList.find((x) => x.id === id);
-    const picked = item ? { ...item } : {};
-    this._applyFinal(this.data.rent.total, picked);
-    this.setData({ pickedCoupon: picked, couponSheet: false });
-  },
-  onUnpickCoupon() {
-    this._applyFinal(this.data.rent.total, {});
-    this.setData({ pickedCoupon: {}, couponSheet: false });
+    this.setData(this.data.allowManualPick
+      ? { calOpen: true, activePreset: 0 }
+      : { calOpen: true });
   },
 
   /** 给定用机天数 → 一组起讫日（酒店式语义：end = 归还日，不计入用机/计费）
    *  起租=今天；归还日 = 今天 + 物流期 + 用机天数（即最后用机日的次日）。
    *  例：物流 3 天 + 用机 3 天 → 起租 D，用机 D+3~D+5，归还 D+6。 */
   _rangeForRentDays(rentDays) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const start = this._fmtDate(today);
-    const totalDays = (this.data.SHIP_DAYS || 0) + Math.max(1, rentDays);
-    const end = this._addDays(start, totalDays);   // 归还日 = 起租 + 物流 + 用机
-    return { start, end };
+    return pricing.rangeForRentDays(rentDays, this.data.SHIP_DAYS);
   },
 
   /** 顶部快捷预设点击 */
@@ -1139,18 +917,10 @@ Page({
     this.setData({
       rent,
       activePreset: d,
+      // 用快捷天数选定了区间，日历没必要再占着屏幕
+      calOpen: false,
       calMonths: this._buildCalendar(p, sel.start, sel.end),
-    }, () => this._refreshCoupons());
-  },
-
-  _emptyRent(p) {
-    return {
-      startDate: '', endDate: '',
-      startDateShort: '', endDateShort: '',
-      days: 0, shipDays: this.data.SHIP_DAYS, rentDays: 0,
-      pricePerDay: 0, total: 0, breakdown: [], saved: 0,
-      deposit: (p && p.deposit_amount) || 0,
-    };
+    });
   },
 
   /** 渲染 N 个月日历，从今天所在月起；start/end 是已选区间（可空） */
@@ -1226,20 +996,42 @@ Page({
     return { label: `${y}年${m + 1}月`, weeks };
   },
 
-  _tiersOf(p) {
-    return (p && p.price_tiers && p.price_tiers.length)
-      ? p.price_tiers.slice().sort((a, b) => Number(a.from) - Number(b.from))
-      : [{ from: 1, price: 0 }];
+  /** 商品 + 选中 SKU → 合并后的展示对象。
+   *  把 SKU 的「价格 / 押金 / 库存 / 分段租金」盖到商品同名字段上，这样详情页
+   *  原有的 p.min_price、p.deposit_amount、p.stock 绑定和 _calcRent / _tiersOf
+   *  全部不用改，就自然按选中的 SKU 走。
+   *  SKU 被全部下架的极端情况下原样返回商品，退回商品级兜底值。 */
+  _mergeSku(base, sku) {
+    if (!base || !sku) return base;
+    return Object.assign({}, base, {
+      price_tiers:    sku.price_tiers,
+      min_price:      sku.min_price,
+      deposit_amount: sku.deposit_amount,
+      stock:          sku.stock,
+    });
   },
 
-  /** 用机第 N 天的单价（按 tiers） */
-  _unitPriceForRentDay(rentDay, tiers) {
-    let unit = 0;
-    for (const t of tiers) {
-      if (rentDay >= Number(t.from)) unit = Number(t.price) || 0;
-    }
-    return unit;
+  /** 切换 SKU：重算可读租金行 + 折线图；抽屉开着时连租金/押金/可用券一起刷新 */
+  onSkuTap(e) {
+    const i = parseInt(e.currentTarget.dataset.i, 10);
+    const skus = this.data.skus || [];
+    if (Number.isNaN(i) || !skus[i] || i === this.data.skuIndex) return;
+    const merged = this._mergeSku(this._baseProduct, skus[i]);
+    this.setData({ p: merged, skuIndex: i }, () => {
+      if (!this.data.rentSheet) return;
+      // 抽屉开着时换规格：租金/押金/日历标价都要跟着变
+      const r = this.data.rent || {};
+      this.setData({
+        rent: this._calcRent(r.startDate, r.endDate, merged),
+        calMonths: this._buildCalendar(merged, r.startDate, r.endDate),
+      });
+    });
   },
+
+  // 以下几个是 utils/pricing.js 的薄转发：保留方法名让日历渲染等调用点不用改，
+  // 同时保证算法只有一份（确认订单页用的是同一个模块）。
+  _tiersOf(p) { return pricing.tiersOf(p); },
+  _unitPriceForRentDay(rentDay, tiers) { return pricing.unitPriceForRentDay(rentDay, tiers); },
 
   /** 点击日历格子：第一次选起租日；第二次若晚于起租 → 归还日，否则重置为起租 */
   onCalDayTap(e) {
@@ -1278,97 +1070,29 @@ Page({
         end = ymd;
       }
     }
-    const rent = this._calcRent(start, end, p);
-    // 手动选了日期后，如果用机天数恰好等于某个预设就高亮它；否则取消高亮
-    const matched = (start && end)
-      ? this.data.rentPresets.find(d => d === rent.rentDays) || 0
-      : 0;
+    // 日历只能从「自选租期」进入，所以点选期间一直保持自选态：
+    // 不再把恰好等于某个预设的天数回高亮到快捷条上（那会让「自选租期」看起来没选中）
     this.setData({
-      rent,
-      activePreset: matched,
+      rent: this._calcRent(start, end, p),
+      activePreset: 0,
       calMonths: this._buildCalendar(p, start, end),
-    }, () => this._refreshCoupons());
+    });
   },
 
-  _fmtDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  },
-  _parseDate(s) {
-    // ios safari/小程序 webview 对 'YYYY-MM-DD' 解析不一致，用 '/' 分隔更稳
-    return new Date((s || '').replace(/-/g, '/'));
-  },
-  _addDays(start, days) {
-    const d = this._parseDate(start);
-    d.setDate(d.getDate() + days);
-    return this._fmtDate(d);
-  },
-  _formatDateShort(s) {
-    const d = this._parseDate(s);
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
-  },
-  /** 分段计费：按 N 天落到的段逐段累加。tiers 必须按 from 升序、首段 from===1 */
-  _calcTieredAmount(days, tiers) {
-    days = Math.max(0, parseInt(days, 10) || 0);
-    if (!days || !Array.isArray(tiers) || !tiers.length) return { total: 0, breakdown: [] };
-    const segs = tiers.slice().sort((a, b) => Number(a.from) - Number(b.from));
-    let total = 0;
-    const breakdown = [];
-    for (let i = 0; i < segs.length; i++) {
-      const segFrom = Number(segs[i].from);
-      if (segFrom > days) break;
-      const next = segs[i + 1];
-      const segEndRaw = next ? Number(next.from) - 1 : days;
-      const segEnd = Math.min(segEndRaw, days);
-      const segDays = segEnd - segFrom + 1;
-      const segPrice = Number(segs[i].price) || 0;
-      const subtotal = segDays * segPrice;
-      total += subtotal;
-      breakdown.push({
-        from: segFrom, to: segEnd, days: segDays, price: segPrice,
-        subtotal: Math.round(subtotal * 100) / 100,
-        label: `第${segFrom}-${segEnd}天 ¥${segPrice}×${segDays}天`,
-      });
-    }
-    return { total: Math.round(total * 100) / 100, breakdown };
-  },
+  _fmtDate(d) { return pricing.fmtDate(d); },
+  _parseDate(s) { return pricing.parseDate(s); },
+  _addDays(start, days) { return pricing.addDays(start, days); },
+  _formatDateShort(s) { return pricing.formatDateShort(s); },
 
-  /** 起讫日 → 全套金额计算；前 SHIP_DAYS 天物流期免租，剩余按 tier 算 */
+  /** 起讫日 → 全套金额计算；前 SHIP_DAYS 天物流期免租，剩余按 tier 算。
+   *  额外补一个 deliverShort 给抽屉底部的送达提示条用：物流期最后一天即签收日
+   *  （次日开始计费），与确认订单页时间轴的「签收」是同一个日期。 */
   _calcRent(start, end, p) {
-    if (!start) return this._emptyRent(p);
-    const ship = this.data.SHIP_DAYS;
-    const tiers = this._tiersOf(p);
-    const firstPrice = Number(tiers[0].price) || 0;
-    const deposit = (p && p.deposit_amount) || 0;
-
-    if (!end) {
-      // 只选了起租日，先返回半成品（用于底部展示提示文案）
-      return {
-        startDate: start, endDate: '',
-        startDateShort: this._formatDateShort(start), endDateShort: '',
-        days: 0, shipDays: ship, rentDays: 0,
-        pricePerDay: 0, total: 0, breakdown: [], saved: 0,
-        deposit,
-      };
-    }
-
-    const sd = this._parseDate(start);
-    const ed = this._parseDate(end);
-    // end = 归还日（不计入持有），持有天数 = end - start = 物流期 + 用机天数
-    const totalDays = Math.round((ed - sd) / 86400000);
-    const rentDays = Math.max(0, totalDays - ship);
-    const { total, breakdown } = this._calcTieredAmount(rentDays, tiers);
-    const saved = Math.max(0, Math.round((firstPrice * rentDays - total) * 100) / 100);
-    const pricePerDay = rentDays ? Math.round((total / rentDays) * 100) / 100 : 0;
-    return {
-      startDate: start, endDate: end,
-      startDateShort: this._formatDateShort(start),
-      endDateShort: this._formatDateShort(end),
-      days: totalDays, shipDays: ship, rentDays,
-      pricePerDay, total, breakdown, saved, deposit,
-    };
+    const r = pricing.calcRent(start, end, p, this.data.SHIP_DAYS);
+    r.deliverShort = (r.startDate && r.endDate && r.rentDays > 0)
+      ? pricing.formatDateShort(pricing.addDays(r.startDate, Math.max(0, r.shipDays - 1)))
+      : '';
+    return r;
   },
 
   /** 抽屉内可视化提示：kind=warn|info；3.5s 后自动收起 */
@@ -1384,16 +1108,24 @@ Page({
   closeRentSheet() {
     if (!this.data.rentSheet) return;
     if (this._tipTimer) { clearTimeout(this._tipTimer); this._tipTimer = null; }
-    this.setData({ rentSheet: false, 'inlineTip.show': false });
-    if (this._rentResolve) {
-      this._rentResolve(null);
-      this._rentResolve = null;
-    }
+    this.setData({ rentSheet: false, calOpen: false, 'inlineTip.show': false });
   },
   confirmRentSheet() {
     const r = this.data.rent;
     const minRent = this.data.MIN_RENT_DAYS;
     const ship = this.data.SHIP_DAYS;
+    // 抽屉内可以切换规格，可能切到无货的那个（无货项刻意保持可点，好让用户看到它的价格）。
+    // 拦在这里，别让用户跑到确认页才被告知没货。
+    if (!((this.data.p.stock || 0) > 0)) {
+      this._showInlineTip(
+        'warn',
+        '该规格暂时无货',
+        (this.data.skus || []).length > 1
+          ? `请在上方换一个有货的${this.data.skuOptionName}`
+          : '该商品库存不足，暂时无法下单',
+      );
+      return;
+    }
     if (!r.startDate || !r.endDate) {
       this._showInlineTip(
         'info',
@@ -1416,17 +1148,11 @@ Page({
     }
     this.setData({ rentSheet: false, 'inlineTip.show': false });
     if (this._tipTimer) { clearTimeout(this._tipTimer); this._tipTimer = null; }
-    if (this._rentResolve) {
-      this._rentResolve({
-        days: r.rentDays,
-        totalDays: r.days,
-        shipDays: r.shipDays,
-        startDate: r.startDate,
-        endDate: r.endDate,
-        total: r.total,
-        userCouponId: (this.data.pickedCoupon && this.data.pickedCoupon.id) || 0,
-      });
-      this._rentResolve = null;
-    }
+    this._gotoConfirm({
+      days: r.rentDays,
+      shipDays: r.shipDays,
+      startDate: r.startDate,
+      endDate: r.endDate,
+    });
   }
 });

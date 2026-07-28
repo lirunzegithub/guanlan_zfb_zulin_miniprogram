@@ -1,4 +1,5 @@
 const { get, post } = require('../../utils/request.js');
+const pricing = require('../../utils/pricing.js');
 
 const STATUS_TEXT = {
   pay: '待支付', audit: '待免押',
@@ -35,6 +36,31 @@ const SERVICE_PHONE = '400-000-0000';
 const COURIER_NAMES = {
   SF: '顺丰速运',
   JD: '京东物流',
+};
+
+// 顶部进度条的五个阶段。10 种订单状态收敛到这 5 段展示，
+// 用户不需要理解 return_inspecting 和 overdue 的区别，只需要知道走到哪一步了。
+const STEPS = ['免押下单', '商家发货', '签收使用', '归还/续租', '订单完成'];
+const STATUS_STEP = {
+  audit: 0, pay: 0,
+  send: 1, pending_cancel: 1,
+  recv: 2, using: 2,
+  return: 3, overdue: 3, return_inspecting: 3,
+  done: 4,
+};
+// 状态副标题：告诉用户"现在轮到谁做什么"，比只写状态名有用
+const STATUS_SUB = {
+  audit:  '你的订单还未完成押金减免，请及时处理',
+  pay:    '订单待支付，请尽快完成',
+  send:   '商家正在备货，承诺 48 小时内发货',
+  pending_cancel: '取消申请审核中，商家同意后将自动解冻',
+  recv:   '商家已发货，请注意查收',
+  using:  '设备使用中，到期前可归还或续租',
+  return: '租期即将到期，请及时安排归还',
+  overdue:'已超过预计归还日，请尽快寄回',
+  return_inspecting: '已收到寄回信息，等待商家签收核验',
+  done:   '订单已完成，感谢使用',
+  cancelled: '订单已取消',
 };
 
 // 起租日 + N 天 → 触发强制违约扣款的截止日（业务硬约束 350 天）
@@ -117,6 +143,8 @@ Page({
     rsSubmitting: false,
     // 实时租金累计卡（show=false 时整张卡不渲染）
     rent: { show: false },
+    steps: STEPS,
+    infoOpen: false,          // 订单信息「展开更多」
   },
 
   onLoad(q) {
@@ -178,6 +206,13 @@ Page({
         || (Number(o.deposit_freeze || 0) + (o._freezeIncludesRent ? Number(o.amount || 0) : 0));
       o._freezeText = freezeAmt.toFixed(2);
       o._shortName   = shortName(o.product_name);
+      // 顶部进度 + 副标题
+      o._stepIndex = STATUS_STEP[o.status];
+      if (o._stepIndex === undefined) o._stepIndex = -1;   // cancelled：不画进度条
+      o._statusSub = STATUS_SUB[o.status] || '';
+      o._cancelled = o.status === 'cancelled';
+      // 租期时间轴：与下单时同一套算法（utils/pricing），四个日期口径一致
+      o._tl = pricing.buildTimeline(o.start_date, o.end_date, Number(o.ship_days) || 0);
       // 物流字段渲染
       const lc = (o.logistics_company || '').toUpperCase();
       o._logiCompanyName = COURIER_NAMES[lc] || lc || '快递';
@@ -208,6 +243,9 @@ Page({
       }
     } catch (e) {}
   },
+
+  toggleInfo() { this.setData({ infoOpen: !this.data.infoOpen }); },
+  onOpenAgreement() { my.navigateTo({ url: '/pages/agreement/agreement' }); },
 
   // -------------------- 实时租金累计 --------------------
   // 拼一份当前的 rent 视图模型

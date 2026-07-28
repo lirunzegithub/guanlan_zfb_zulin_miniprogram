@@ -15,15 +15,17 @@
 在此统一加 @auth_required。
 """
 import os
+import re
 import time
 import uuid
 
 from flask import Blueprint, request, g
 from app.response import ok, fail
 from app.storage.repos import (
-    banner_repo, category_repo, product_repo, user_repo, staff_repo,
+    banner_repo, category_repo, product_repo, sku_repo, user_repo, staff_repo,
     comment_repo, coupon_repo, user_coupon_repo,
     order_repo, address_repo, trade_repo, faq_repo, order_note_repo,
+    ensure_default_sku,
 )
 from app.storage.order_ops import update_order
 from app.notify_log import list_recent as list_notify_logs, clear as clear_notify_logs
@@ -48,6 +50,27 @@ _PUBLIC_PATHS = {
 def _safe_staff(s: dict) -> dict:
     """去掉密码哈希再返回前端。"""
     return {k: v for k, v in s.items() if k != "password_hash"}
+
+
+_ID_CARD_RE = re.compile(r"^(\d{15}|\d{17}[\dXx])$")
+
+
+def _mask_id_card(card: str) -> str:
+    """身份证脱敏：保留前 3 位和后 2 位，中间打星。"""
+    c = (card or "").strip()
+    if not c:
+        return ""
+    if len(c) <= 5:
+        return "*" * len(c)
+    return c[:3] + "*" * (len(c) - 5) + c[-2:]
+
+
+def _safe_user(u: dict) -> dict:
+    """用户对外表示：抹掉明文身份证号，只给脱敏串。
+    明文单独走 GET /users/<uid>/id-card，且仅 admin 可读。"""
+    out = {k: v for k, v in u.items() if k != "id_card"}
+    out["id_card_mask"] = _mask_id_card(u.get("id_card") or "")
+    return out
 
 
 @bp.before_request
@@ -118,8 +141,18 @@ def stats():
     cats = category_repo.list()
     banners = banner_repo.list()
     orders = order_repo.list()
-    total_stock = sum(int(p.get("stock") or 0) for p in products)
-    total_sales = sum(int(p.get("sales") or 0) for p in products)
+    # 库存 / 销量的真相在 SKU 层：按 SKU 汇总。没有 SKU 的商品（理论上不存在，
+    # 启动回填会补上）退回商品级字段，避免统计凭空少一块。
+    skus = sku_repo.list()
+    covered = {s.get("product_id") for s in skus}
+    total_stock = (
+        sum(int(s.get("stock") or 0) for s in skus)
+        + sum(int(p.get("stock") or 0) for p in products if p.get("id") not in covered)
+    )
+    total_sales = (
+        sum(int(s.get("sales") or 0) for s in skus)
+        + sum(int(p.get("sales") or 0) for p in products if p.get("id") not in covered)
+    )
 
     order_status_count: dict[str, int] = {}
     revenue_paid = 0.0  # 已收租金（订单进入 send 之后视为成交；取消单不计）
@@ -181,6 +214,15 @@ _ALLOWED = {
         "price_curve", "rights", "real_shots", "spec_groups",
         "damage_standard",
         "shop",
+        "sku_option_name",
+        "status", "sort",
+    }),
+    # SKU：min_price / price_curve 是 price_tiers 的派生值，由服务端算，
+    # product_id 由路由的 <pid> 决定，都不接受前端提交
+    "skus": frozenset({
+        "name", "cover_url",
+        "price_tiers", "deposit_amount",
+        "stock", "sales",
         "status", "sort",
     }),
     "coupons": frozenset({
@@ -351,12 +393,17 @@ def _local_path_for_cover(url: str) -> str | None:
     return path if os.path.exists(path) else None
 
 
-def _sync_product_alipay_material(product_id) -> None:
-    """商品保存后异步触发：covers[0] 若与 alipay_image_source 不同 → 上传到
-    支付宝素材库，把返回的 image_id 写回 product.alipay_image_material_id。
+def _sync_alipay_material(repo, oid, new_cover: str, *, tag: str, name: str) -> None:
+    """把某条记录的主图上传到支付宝素材库，image_id 写回 alipay_image_material_id。
 
-    失败仅 log，不抛错；下次保存还会再试，永远不阻塞商品保存动作。
+    商品和 SKU 共用这一套：两者的字段名（alipay_image_material_id /
+    alipay_image_source）一致，差别只在从哪个 repo 取、日志里怎么称呼。
+      repo / oid  → 目标记录
+      new_cover   → 本次要上传的封面 URL（调用方自己决定取 covers[0] 还是 cover_url）
+      tag         → 日志前缀，如 "商品 #3" / "SKU #12"
+      name        → 记录名，落进 notify_log 的 params 方便运营辨认
 
+    失败仅 log，不抛错；下次保存还会再试，永远不阻塞保存动作。
     所有分支（skip / cleared / uploaded / failed）都会落一条 notify_log，
     channel="alipay_material_upload"，运营在「回调日志」页能看到调用历史。
     """
@@ -365,77 +412,47 @@ def _sync_product_alipay_material(product_id) -> None:
 
     logger = logging.getLogger(__name__)
 
-    p = product_repo.get(product_id)
-    if not p:
+    rec = repo.get(oid)
+    if not rec:
         return
 
-    new_cover = ""
-    if isinstance(p.get("covers"), list) and p["covers"]:
-        new_cover = (p["covers"][0] or "").strip()
-    if not new_cover:
-        new_cover = (p.get("cover_url") or "").strip()
-
+    new_cover = (new_cover or "").strip()
     # 「alipay_image_source」带版本前缀：升 API 后历史值自然失效，触发一次重传
     # v2 = 改用 alipay.merchant.item.file.upload（v1 错误地用了 offline.material.image.upload）
     source_signature = f"v2:{new_cover}" if new_cover else ""
-    old_source = (p.get("alipay_image_source") or "").strip()
-    old_material = (p.get("alipay_image_material_id") or "").strip()
+    old_source = (rec.get("alipay_image_source") or "").strip()
+    old_material = (rec.get("alipay_image_material_id") or "").strip()
+
+    def _log(outcome, *, verified, business_ok, note, **extra):
+        notify_record(
+            channel="alipay_material_upload",
+            params={"target": tag, "name": name, "outcome": outcome, **extra},
+            verified=verified,
+            business_ok=business_ok,
+            note=f"{tag} {note}",
+        )
 
     # 没换图（且签名一致）→ 跳过；只在还从未上传过时才记日志，避免噪音
     if source_signature == old_source:
         if not old_material:
-            notify_record(
-                channel="alipay_material_upload",
-                params={
-                    "product_id":  product_id,
-                    "product_name": p.get("name") or "",
-                    "outcome":     "skip_no_change",
-                    "cover":       new_cover,
-                },
-                verified=True,
-                business_ok=False,
-                note=f"#{product_id} 主图未变更，跳过上传（material_id 仍为空）",
-            )
+            _log("skip_no_change", verified=True, business_ok=False,
+                 note="主图未变更，跳过上传（material_id 仍为空）", cover=new_cover)
         return
 
     # 主图被清空 → 把 material_id 一起清掉
     if not new_cover:
-        product_repo.update(product_id, {
-            "alipay_image_material_id": "",
-            "alipay_image_source": "",
-        })
-        notify_record(
-            channel="alipay_material_upload",
-            params={
-                "product_id":   product_id,
-                "product_name": p.get("name") or "",
-                "outcome":      "cleared",
-                "previous":     old_source,
-            },
-            verified=True,
-            business_ok=True,
-            note=f"#{product_id} 主图已清空，material_id 已清",
-        )
+        repo.update(oid, {"alipay_image_material_id": "", "alipay_image_source": ""})
+        _log("cleared", verified=True, business_ok=True,
+             note="主图已清空，material_id 已清", previous=old_source)
         return
 
     file_path = _local_path_for_cover(new_cover)
     if not file_path:
         logger.warning(
-            "alipay material upload skipped: 无法定位本地文件 product_id=%s cover=%s",
-            product_id, new_cover,
+            "alipay material upload skipped: 无法定位本地文件 %s cover=%s", tag, new_cover,
         )
-        notify_record(
-            channel="alipay_material_upload",
-            params={
-                "product_id":   product_id,
-                "product_name": p.get("name") or "",
-                "outcome":      "skip_remote_url",
-                "cover":        new_cover,
-            },
-            verified=True,
-            business_ok=False,
-            note=f"#{product_id} 跳过：封面非本地路径（外链/缺失），无法读盘",
-        )
+        _log("skip_remote_url", verified=True, business_ok=False,
+             note="跳过：封面非本地路径（外链/缺失），无法读盘", cover=new_cover)
         return
 
     try:
@@ -443,38 +460,48 @@ def _sync_product_alipay_material(product_id) -> None:
         material_id = get_client().upload_merchant_item_file(file_path)
     except Exception as e:
         err_msg = str(e)
-        logger.warning("alipay material upload failed product_id=%s err=%s", product_id, err_msg)
-        notify_record(
-            channel="alipay_material_upload",
-            params={
-                "product_id":   product_id,
-                "product_name": p.get("name") or "",
-                "outcome":      "failed",
-                "cover":        new_cover,
-                "err":          err_msg,
-            },
-            verified=False,
-            business_ok=False,
-            note=f"#{product_id} 上传失败 - {err_msg[:160]}",
-        )
+        logger.warning("alipay material upload failed %s err=%s", tag, err_msg)
+        _log("failed", verified=False, business_ok=False,
+             note=f"上传失败 - {err_msg[:160]}", cover=new_cover, err=err_msg)
         return
 
-    product_repo.update(product_id, {
+    repo.update(oid, {
         "alipay_image_material_id": material_id,
         "alipay_image_source": source_signature,
     })
-    notify_record(
-        channel="alipay_material_upload",
-        params={
-            "product_id":   product_id,
-            "product_name": p.get("name") or "",
-            "outcome":      "uploaded",
-            "cover":        new_cover,
-            "material_id":  material_id,
-        },
-        verified=True,
-        business_ok=True,
-        note=f"#{product_id} 上传成功 → material_id={material_id}",
+    _log("uploaded", verified=True, business_ok=True,
+         note=f"上传成功 → material_id={material_id}",
+         cover=new_cover, material_id=material_id)
+
+
+def _sync_product_alipay_material(product_id) -> None:
+    """商品保存后触发：主图取 covers[0]，没有则回落 cover_url。"""
+    p = product_repo.get(product_id)
+    if not p:
+        return
+    cover = ""
+    if isinstance(p.get("covers"), list) and p["covers"]:
+        cover = (p["covers"][0] or "").strip()
+    if not cover:
+        cover = (p.get("cover_url") or "").strip()
+    _sync_alipay_material(
+        product_repo, product_id, cover,
+        tag=f"商品 #{product_id}", name=p.get("name") or "",
+    )
+
+
+def _sync_sku_alipay_material(sku_id) -> None:
+    """SKU 保存后触发：只认 SKU 自己的 cover_url。
+
+    留空是正常情况（该 SKU 不配独立图）——此时 material_id 会被清成空串，
+    order_sync 同步订单时自动回落到商品的 material_id。
+    """
+    s = sku_repo.get(sku_id)
+    if not s:
+        return
+    _sync_alipay_material(
+        sku_repo, sku_id, (s.get("cover_url") or "").strip(),
+        tag=f"SKU #{sku_id}", name=s.get("name") or "",
     )
 
 
@@ -483,6 +510,26 @@ def _register_crud(prefix: str, repo):
     @bp.get(f"/{prefix}", endpoint=f"{prefix}_list")
     def _list():
         items = repo.list()
+        # 商品列表带上 SKU 聚合：库存 / 销量的真相在 SKU 层，列表列直接展示汇总值，
+        # 后台不再让人编辑商品级的那两个字段（编辑了也不影响下单，只会误导）
+        if prefix == "products":
+            agg: dict = {}
+            for s in sku_repo.list():
+                a = agg.setdefault(
+                    s.get("product_id"), {"n": 0, "stock": 0, "sales": 0, "dep": []}
+                )
+                a["n"] += 1
+                a["stock"] += int(s.get("stock") or 0)
+                a["sales"] += int(s.get("sales") or 0)
+                a["dep"].append(float(s.get("deposit_amount") or 0))
+            for it in items:
+                a = agg.get(it.get("id"))
+                it["sku_count"] = a["n"] if a else 0
+                it["sku_stock"] = a["stock"] if a else int(it.get("stock") or 0)
+                it["sku_sales"] = a["sales"] if a else int(it.get("sales") or 0)
+                # 押金各 SKU 可能不同，给个区间让列表页显示 "¥3000 ~ 5000"
+                it["sku_deposit_min"] = min(a["dep"]) if a and a["dep"] else 0
+                it["sku_deposit_max"] = max(a["dep"]) if a and a["dep"] else 0
         return ok({"list": items, "total": len(items)})
 
     @bp.get(f"/{prefix}/<int:oid>", endpoint=f"{prefix}_get")
@@ -514,6 +561,11 @@ def _register_crud(prefix: str, repo):
         # 失败不抛错；下次保存还会再试
         if prefix == "products" and rec and rec.get("id"):
             _sync_product_alipay_material(rec["id"])
+            # 单一数据源：表单里填的价格/押金/库存只是"第一个 SKU 的初始值"，
+            # 落库后立刻转成一条 SKU，保证"每个商品至少一个 SKU"的不变式。
+            # 克隆走 ?default_sku=0：由前端复制来源商品的 SKU，不要这条空壳标准版。
+            if request.args.get("default_sku") != "0":
+                ensure_default_sku(rec)
             rec = repo.get(rec["id"]) or rec  # 拿回带最新 material_id 的视图
         msg = "新增成功"
         if dropped:
@@ -560,6 +612,148 @@ _register_crud("banners", banner_repo)
 _register_crud("categories", category_repo)
 _register_crud("products", product_repo)
 _register_crud("faqs", faq_repo)
+
+
+# ---------- SKU：挂在商品下的子资源，不走通用 CRUD 工厂 ----------
+# 路由形态：GET/POST /products/<pid>/skus  +  PUT/DELETE /skus/<sid>
+# 不变式：每个商品恒定至少有一个 SKU（新建自动建、删到最后一个时拒绝）。
+def _validate_sku(body: dict, pid, *, sku_id=None, required: bool) -> str | None:
+    """SKU 校验：名称必填且同商品内不重名；押金 / 分段租金复用商品那套规则。"""
+    if "name" in body or required:
+        name = (body.get("name") or "").strip()
+        if not name:
+            return "SKU 名称必填"
+        for s in sku_repo.list(product_id=pid):
+            if s.get("id") != sku_id and (s.get("name") or "").strip() == name:
+                return f"该商品下已存在名为「{name}」的 SKU"
+    if "stock" in body:
+        try:
+            if int(body.get("stock")) < 0:
+                return "库存不能为负"
+        except (TypeError, ValueError):
+            return "库存必须为整数"
+    if "status" in body and body["status"] not in ("on", "off"):
+        return "状态必须是 on 或 off"
+
+    err = _validate_product_deposit(body, required=required)
+    if err:
+        return err
+    err = _validate_product_pricing(body, required=required)
+    if err:
+        return err
+    if "price_tiers" in body:
+        okp, errmsg = validate_tiers(body["price_tiers"])
+        if not okp:
+            return f"价格分段配置无效：{errmsg}"
+    return None
+
+
+@bp.get("/products/<int:pid>/skus")
+def skus_list(pid):
+    if not product_repo.get(pid):
+        return fail(404, "商品不存在")
+    items = sku_repo.list(product_id=pid)
+    return ok({"list": items, "total": len(items)})
+
+
+@bp.post("/products/<int:pid>/skus/reorder")
+def skus_reorder(pid):
+    """按前端拖拽后的顺序重排该商品的 SKU。
+
+    入参 {"ids": [3, 1, 2]}：整个顺序一次性提交，而不是逐个 PUT sort 值——
+    逐个提交时若中途失败，会留下一半新序一半旧序的错乱状态。
+
+    写入的 sort 是数组下标（0,1,2…），不复用原值：原值可能有重复或空洞
+    （历史 SKU 都是 0），重排后一律规整成连续序号。
+    小程序端不需要改动，repo.list() 本来就按 sort_key 排序。
+    """
+    if not product_repo.get(pid):
+        return fail(404, "商品不存在")
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return fail(1, "ids 必须是非空数组")
+
+    try:
+        ids = [int(i) for i in raw_ids]
+    except (TypeError, ValueError):
+        return fail(1, "ids 只能是 SKU 数字 id")
+    if len(set(ids)) != len(ids):
+        return fail(1, "ids 里有重复的 SKU")
+
+    # 必须与该商品当前的 SKU 集合完全一致：多了/少了都说明前端拿的是过期列表
+    # （别的窗口刚增删过 SKU），此时按它排序会把漏掉的 SKU 甩到末尾。
+    owned = {s["id"] for s in sku_repo.list(product_id=pid)}
+    if set(ids) != owned:
+        return fail(1, "SKU 列表已变化，请刷新后重新排序")
+
+    for idx, sid in enumerate(ids):
+        sku_repo.update(sid, {"sort": idx})
+    return ok({"list": sku_repo.list(product_id=pid)}, "排序已保存")
+
+
+@bp.post("/products/<int:pid>/skus")
+def skus_create(pid):
+    if not product_repo.get(pid):
+        return fail(404, "商品不存在")
+    body, dropped = _sanitize("skus", request.get_json(silent=True))
+    err = _validate_sku(body, pid, required=True)
+    if err:
+        return fail(1, err)
+    _apply_pricing_derivations(body)
+    body["product_id"] = pid          # 归属由路由决定，不信前端
+    # 新 SKU 默认排在最后。不给的话 sort 落 0，会插到已排序列表的最前面，
+    # 运营每加一个新规格都得重新拖一遍。
+    if "sort" not in body:
+        existing = sku_repo.list(product_id=pid)
+        body["sort"] = max((int(s.get("sort") or 0) for s in existing), default=-1) + 1
+    rec = sku_repo.create(body)
+    # SKU 配了独立封面才会真的上传；没配则把 material_id 清空，同步订单时回落商品图
+    _sync_sku_alipay_material(rec["id"])
+    rec = sku_repo.get(rec["id"]) or rec
+    msg = "新增 SKU 成功"
+    if dropped:
+        msg += f"（已忽略字段：{', '.join(dropped)}）"
+    return ok(rec, msg)
+
+
+@bp.put("/skus/<int:sid>")
+def skus_update(sid):
+    s = sku_repo.get(sid)
+    if not s:
+        return fail(404, "SKU 不存在")
+    body, dropped = _sanitize("skus", request.get_json(silent=True))
+    err = _validate_sku(body, s.get("product_id"), sku_id=sid, required=False)
+    if err:
+        return fail(1, err)
+    _apply_pricing_derivations(body)
+    rec = sku_repo.update(sid, body)
+    _sync_sku_alipay_material(sid)
+    rec = sku_repo.get(sid) or rec
+    msg = "更新成功"
+    if dropped:
+        msg += f"（已忽略字段：{', '.join(dropped)}）"
+    return ok(rec, msg)
+
+
+@bp.delete("/skus/<int:sid>")
+def skus_delete(sid):
+    s = sku_repo.get(sid)
+    if not s:
+        return fail(404, "SKU 不存在")
+    # ① 至少留一个：商品的价格/押金/库存只存在于 SKU 层，删空了商品就没法卖了
+    if len(sku_repo.list(product_id=s.get("product_id"))) <= 1:
+        return fail(1, "每个商品至少要保留一个 SKU；如果想让它不可选，请把状态改为「下架」")
+    # ② 有未终结订单占用该 SKU 时不许删：订单里虽然存了名字快照、展示不会出错，
+    # 但归还核销 / 库存回补仍要按 sku_id 找回这一行，删掉就断链了。
+    live = [
+        o for o in order_repo.list(sku_id=sid)
+        if (o.get("status") or "") not in _FREEZE_DONE_STATUS
+    ]
+    if live:
+        return fail(1, f"该 SKU 还有 {len(live)} 笔进行中的订单，不能删除；可改为「下架」隐藏")
+    sku_repo.delete(sid)
+    return ok(None, "删除成功")
 
 
 # ---------- 优惠券（满减券）独立 CRUD（带满减专属校验） ----------
@@ -741,6 +935,35 @@ def _latest_note_for(order_id, note_map: dict | None = None) -> dict | None:
     return _note_view(latest)
 
 
+def _age_from_id_card(card: str) -> int | None:
+    """从身份证号推算周岁年龄；号码为空/格式不对/日期非法时返回 None。
+
+    18 位：第 7-14 位是 YYYYMMDD；15 位（老号）：第 7-12 位是 YYMMDD，一律按 19xx 补全
+    （15 位证件 1999 年起停发，不存在 20xx 出生的）。
+    """
+    s = (card or "").strip()
+    if len(s) == 18:
+        y, m, d = s[6:10], s[10:12], s[12:14]
+    elif len(s) == 15:
+        y, m, d = "19" + s[6:8], s[8:10], s[10:12]
+    else:
+        return None
+    if not (y + m + d).isdigit():
+        return None
+
+    import datetime
+    try:
+        birth = datetime.date(int(y), int(m), int(d))
+    except ValueError:          # 2 月 30 日之类的脏数据
+        return None
+    today = datetime.date.today()
+    if birth > today:
+        return None
+    # 生日还没过就减 1 岁
+    age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+    return age if 0 <= age <= 150 else None
+
+
 def _order_view(o: dict, *, user_map: dict | None = None,
                 product_map: dict | None = None,
                 note_map: dict | None = None) -> dict:
@@ -771,6 +994,8 @@ def _order_view(o: dict, *, user_map: dict | None = None,
     out["user_real_name"] = u.get("real_name") or ""
     out["user_phone"] = u.get("phone") or ""
     out["user_verified"] = bool(u.get("verified"))
+    # 年龄由身份证号推算（只回传岁数，不把证件号带到订单接口里）
+    out["user_age"] = _age_from_id_card(u.get("id_card") or "")
 
     pid = o.get("product_id")
     if product_map is not None:
@@ -811,27 +1036,29 @@ def _order_view(o: dict, *, user_map: dict | None = None,
     # 工作人员备注：列表/详情都带上最新一条，便于「简洁显示最新备注」
     out["latest_note"] = _latest_note_for(o.get("id"), note_map)
 
-    # 租赁平台（淘宝观澜/闲鱼…）：从发货时的光影快照里派生，列表/详情统一展示。
-    # 支付宝只是收押金的手段、不算平台；真正的渠道存在光影 rent_record.rent_platform。
-    out["rent_platform"] = _rent_platform_of(o)
+    # 光影库存卡片 + 租赁平台/备注：不在此处（列表/详情主请求）同步拉光影，避免光影
+    # 变慢/挂掉拖慢主页面。改由前端渲染后异步调 POST /inventory/cards 补数（见前端）。
+    # 这里只给出空占位，并清掉历史遗留的存档快照，保证响应结构稳定。
+    out.pop("item_snapshot", None)
+    out["rent_platform"] = ""
+    out["rent_remark"] = ""
     return out
 
 
-def _rent_platform_of(o: dict) -> str:
-    """从订单的光影发货快照里取「在租平台」：优先 current_rent，兜底最近一条 ship_out。"""
-    snap = o.get("item_snapshot") or {}
-    if not isinstance(snap, dict):
+def _rent_field_of(inv: dict, field: str) -> str:
+    """从光影商品卡片的租赁记录里取某字段：优先 current_rent，兜底最近一条 ship_out。"""
+    if not isinstance(inv, dict):
         return ""
-    cur = snap.get("current_rent") or {}
+    cur = inv.get("current_rent") or {}
     if isinstance(cur, dict):
-        plat = (cur.get("rent_platform") or "").strip()
-        if plat:
-            return plat
-    for r in (snap.get("rent_records") or []):
+        val = (cur.get(field) or "").strip()
+        if val:
+            return val
+    for r in (inv.get("rent_records") or []):
         if isinstance(r, dict) and r.get("action") == "ship_out":
-            plat = (r.get("rent_platform") or "").strip()
-            if plat:
-                return plat
+            val = (r.get(field) or "").strip()
+            if val:
+                return val
     return ""
 
 
@@ -855,6 +1082,34 @@ def admin_inventory_item():
         "item": payload if status == inventory_client.STATUS_OK else None,
         "message": "" if status == inventory_client.STATUS_OK else payload,
     })
+
+
+@bp.post("/inventory/cards")
+def admin_inventory_cards():
+    """前端异步补数：按货号数组批量拉光影实时卡片（含派生的租赁平台/备注）。
+
+    订单列表/详情主请求不碰光影、秒回；前端渲染后再调本接口把光影数据填进去，
+    这样光影变慢/挂掉只影响这几个字段的出现速度，绝不拖慢主页面。
+
+    body: {"huohaos": ["A1B2C3", ...]}
+    data: {货号: {商品卡片..., rent_platform, rent_remark}}；光影不可用时为 {}。
+    """
+    from app import inventory_client
+    body = request.get_json(silent=True) or {}
+    huohaos = body.get("huohaos")
+    if not isinstance(huohaos, list):
+        return fail(1, "huohaos 需为货号数组")
+
+    inv_map = inventory_client.fetch_items_by_huohaos(huohaos)
+    out: dict = {}
+    for h, card in inv_map.items():
+        if not isinstance(card, dict):
+            continue
+        c = dict(card)
+        c["rent_platform"] = _rent_field_of(card, "rent_platform")
+        c["rent_remark"] = _rent_field_of(card, "rent_remark")
+        out[h] = c
+    return ok(out)
 
 
 @bp.get("/ui-config")
@@ -949,10 +1204,8 @@ def admin_ship_order(oid):
         "lock_until":        None,
     }
     if huohao:
-        # 拉取商品卡片快照；失败（未配置/未找到/网络）不阻断发货，仅落空快照
-        lookup_status, payload = inventory_client.fetch_item_by_huohao(huohao)
+        # 只绑定货号；商品卡片/租赁记录改为展示时实时从光影拉取，不再发货存快照。
         patch["item_huohao"] = huohao
-        patch["item_snapshot"] = payload if lookup_status == inventory_client.STATUS_OK else {}
     # status 变成 recv 时拦截器会自动调 sync_order；sync 结果（成功/失败）会被
     # 同步写回订单的 sync_ok / sync_err 字段，再读一次给运营看精确消息。
     update_order(oid, patch, sync_reason="shipped")
@@ -987,6 +1240,12 @@ def admin_list_orders():
     user_id    = (request.args.get("user_id") or "").strip()
     product_id = request.args.get("product_id", type=int)
     keyword    = (request.args.get("keyword") or "").strip().lower()
+    # 分页：默认每页 50。订单量会持续增长，一次性返回全部会让前端渲染上千行 DOM
+    # 而卡顿（后端本身很快），所以在这里切片，只把当前页的数据 view + 下发。
+    # 前端是下滑无限加载：正常每次取一页 size=50；操作后「就地刷新已加载范围」会用
+    # 较大的 size 一次性重拉，故上限放宽到 500。
+    page = max(request.args.get("page", default=1, type=int), 1)
+    size = min(max(request.args.get("size", default=50, type=int), 1), 500)
 
     items = order_repo.list()
     if status and status != "all":
@@ -1010,14 +1269,20 @@ def admin_list_orders():
 
     items.sort(key=lambda x: -int(x.get("created_at") or 0))
 
-    # 批量预加载关联表，避免列表里每行各查一次
-    uids = {o.get("user_id") for o in items if o.get("user_id")}
+    # 先记全量条数（分页信息），再切出当前页 —— 后面的预加载/序列化都只针对这一页，
+    # 把每次请求的工作量从 O(全部订单) 压到 O(每页 size)。
+    total = len(items)
+    start = (page - 1) * size
+    page_items = items[start:start + size]
+
+    # 批量预加载关联表，避免列表里每行各查一次（只针对当前页涉及的 user/product/note）
+    uids = {o.get("user_id") for o in page_items if o.get("user_id")}
     user_map = {u["id"]: u for u in user_repo.list() if u["id"] in uids} if uids else {}
-    pids = {o.get("product_id") for o in items if o.get("product_id")}
+    pids = {o.get("product_id") for o in page_items if o.get("product_id")}
     product_map = {p["id"]: p for p in product_repo.list() if p["id"] in pids} if pids else {}
 
     # 备注批量预加载：一次拉全表，按 order_id 归并出「每单最新一条」，避免逐行查库
-    oids = {o.get("id") for o in items if o.get("id")}
+    oids = {o.get("id") for o in page_items if o.get("id")}
     note_map: dict = {}
     if oids:
         for n in order_note_repo.list():
@@ -1029,10 +1294,14 @@ def admin_list_orders():
                 note_map[oid] = n
         note_map = {k: _note_view(v) for k, v in note_map.items()}
 
+    # 注意：这里不调用光影。列表只出本地数据、秒回；光影的平台/备注由前端渲染后
+    # 异步调 POST /inventory/cards 补数，避免光影变慢/挂掉拖慢整个订单列表。
     return ok({
         "list":  [_order_view(o, user_map=user_map, product_map=product_map,
-                              note_map=note_map) for o in items],
-        "total": len(items),
+                              note_map=note_map) for o in page_items],
+        "total": total,
+        "page":  page,
+        "size":  size,
     })
 
 
@@ -1528,7 +1797,7 @@ def list_users():
         ts = last_order_ts.get(uid, 0)
         reg_ts = int(u.get("created_at") or 0)   # 用户注册时间（首次登录入库时由 BaseRepository 写入）
         enriched.append({
-            **u,
+            **_safe_user(u),
             "order_count": order_count.get(uid, 0),
             "last_order_at": ts,
             "last_order_at_text": (
@@ -1540,6 +1809,160 @@ def list_users():
             "has_active_order": bool(has_active.get(uid)),
         })
     return ok({"list": enriched, "total": len(enriched)})
+
+
+# ============ 统计中心（仅 admin） ============
+
+# 「在租」口径：设备已签收、尚未寄回 —— 租赁中 / 待归还 / 已逾期
+_ORDER_IN_RENT = frozenset({"using", "return", "overdue"})
+
+# 年龄分桶：(下界, 上界, 标签)，上界 None 表示无上限
+_AGE_BUCKETS = [
+    (0,  17,   "18 岁以下"),
+    (18, 24,   "18-24"),
+    (25, 29,   "25-29"),
+    (30, 34,   "30-34"),
+    (35, 39,   "35-39"),
+    (40, 49,   "40-49"),
+    (50, None, "50 岁以上"),
+]
+
+
+def _gender_from_id_card(card: str) -> str | None:
+    """身份证顺序码「奇男偶女」：18 位取第 17 位，15 位取第 15 位。
+    号码为空 / 长度不对 / 该位不是数字时返回 None（计入「未知」）。"""
+    s = (card or "").strip()
+    if len(s) == 18:
+        d = s[16]
+    elif len(s) == 15:
+        d = s[14]
+    else:
+        return None
+    if not d.isdigit():
+        return None
+    return "male" if int(d) % 2 else "female"
+
+
+# 实际占用不足 1 天的一律判为测试单 / 误操作：设备在物流途中，
+# 物理上不可能当天寄回，这类样本会把平均值显著拉低（实测 72 单里有 15 单，
+# 其中 8 单只隔了几分钟）。剔除但回传条数，前端如实披露。
+_MIN_ACTUAL_DAYS = 1.0
+
+
+def _lease_actual_days(o: dict) -> float | None:
+    """实际占用天数：开始用机 → 归还。缺任意一端返回 None（不计入样本）。
+
+    起点沿用 order_sync._receiving_ts 的口径（lease_started_at 优先，缺失时
+    退回 shipped_at + 物流期），避免两处算法各走各的。
+    终点取核验通过时间，没有就退回用户提交寄回的时间。
+    """
+    from app.order_sync import _receiving_ts
+    start = _receiving_ts(o)
+    end = int(o.get("return_approved_at") or 0) or int(o.get("returned_at") or 0)
+    if not start or not end or end <= start:
+        return None
+    return (end - start) / 86400.0
+
+
+def _avg1(nums) -> float:
+    """平均值，保留 1 位小数；空样本回 0。"""
+    return round(sum(nums) / len(nums), 1) if nums else 0.0
+
+
+@bp.get("/stats/center")
+def stats_center():
+    """统计中心：在租人群画像 + 租期时长。仅 admin 可访问。
+
+    年龄与性别均由身份证号推算，接口只回聚合数字，不下发任何证件号明文。
+    """
+    if g.staff.get("role") != "admin":
+        return fail(403, "仅 admin 可查看统计中心")
+
+    orders = order_repo.list()
+    users = {u.get("id"): u for u in user_repo.list()}
+
+    # ---------- 在租人群：年龄 / 性别（按订单计，一人多单则重复计入） ----------
+    in_rent = [o for o in orders if (o.get("status") or "") in _ORDER_IN_RENT]
+    age_counts = [0] * len(_AGE_BUCKETS)
+    ages: list[int] = []
+    age_unknown = 0
+    gender = {"male": 0, "female": 0, "unknown": 0}
+    for o in in_rent:
+        card = (users.get(o.get("user_id")) or {}).get("id_card") or ""
+        age = _age_from_id_card(card)
+        if age is None:
+            age_unknown += 1
+        else:
+            ages.append(age)
+            for i, (lo, hi, _lb) in enumerate(_AGE_BUCKETS):
+                if age >= lo and (hi is None or age <= hi):
+                    age_counts[i] += 1
+                    break
+        sex = _gender_from_id_card(card)
+        gender["unknown" if sex is None else sex] += 1
+
+    # ---------- 租赁时长：已成单（排除已取消）为总体 ----------
+    valid = [o for o in orders if (o.get("status") or "") != "cancelled"]
+    contract_days = [int(o.get("days") or 0) for o in valid if int(o.get("days") or 0) > 0]
+    actual_all = [d for d in (_lease_actual_days(o) for o in valid) if d is not None]
+    actual_days = [d for d in actual_all if d >= _MIN_ACTUAL_DAYS]
+    actual_excluded = len(actual_all) - len(actual_days)
+
+    # ---------- 分商品 ----------
+    by_pid: dict = {}
+    for o in valid:
+        pid = o.get("product_id") or 0
+        row = by_pid.setdefault(pid, {
+            "product_id": pid,
+            "product_name": o.get("product_name") or f"#{pid}",
+            "orders": 0, "_c": [], "_a": [], "_x": 0,
+        })
+        row["orders"] += 1
+        d = int(o.get("days") or 0)
+        if d > 0:
+            row["_c"].append(d)
+        ad = _lease_actual_days(o)
+        if ad is not None:
+            if ad >= _MIN_ACTUAL_DAYS:
+                row["_a"].append(ad)
+            else:
+                row["_x"] += 1
+
+    products = [{
+        "product_id":          r["product_id"],
+        "product_name":        r["product_name"],
+        "orders":              r["orders"],
+        "contract_avg_days":   _avg1(r["_c"]),
+        "contract_total_days": sum(r["_c"]),
+        # 样本不足时给 None，前端显示「—」而不是把 0 当成"平均 0 天"
+        "actual_avg_days":     _avg1(r["_a"]) if r["_a"] else None,
+        "actual_samples":      len(r["_a"]),
+        "actual_excluded":     r["_x"],
+    } for r in by_pid.values()]
+    products.sort(key=lambda r: (-r["contract_avg_days"], -r["orders"]))
+
+    return ok({
+        "in_rent": {
+            "total": len(in_rent),
+            "age": {
+                "buckets": [{"label": lb, "count": c}
+                            for (_lo, _hi, lb), c in zip(_AGE_BUCKETS, age_counts)],
+                "known":   len(ages),
+                "unknown": age_unknown,
+                "avg":     _avg1(ages),
+            },
+            "gender": gender,
+        },
+        "lease": {
+            "contract_avg_days": _avg1(contract_days),
+            "contract_samples":  len(contract_days),
+            "actual_avg_days":   _avg1(actual_days) if actual_days else None,
+            "actual_samples":    len(actual_days),
+            "actual_excluded":   actual_excluded,
+            "order_total":       len(valid),
+            "by_product":        products,
+        },
+    })
 
 
 # ---------- 支付宝回调日志（临时观察用） ----------
@@ -1870,9 +2293,29 @@ def update_user(uid):
     if not user_repo.get(uid):
         return fail(404, "用户不存在")
     patch = {k: body[k] for k in
-             ("nickname", "phone", "real_name", "id_card", "verified") if k in body}
+             ("nickname", "phone", "real_name", "verified") if k in body}
+    # 身份证号：仅 admin 可改。列表接口回的是掩码（长度同样是 18），
+    # 必须按格式校验，否则前端把掩码原样提交就会把库里的真号覆盖掉。
+    if "id_card" in body:
+        if g.staff.get("role") != "admin":
+            return fail(403, "仅 admin 可修改身份证号")
+        card = (body.get("id_card") or "").strip()
+        if card and not _ID_CARD_RE.match(card):
+            return fail(1, "身份证号格式错误")
+        patch["id_card"] = card
     updated = user_repo.update(uid, patch)
-    return ok(updated, "更新成功")
+    return ok(_safe_user(updated), "更新成功")
+
+
+@bp.get("/users/<uid>/id-card")
+def user_id_card(uid):
+    """明文身份证号：仅 admin 可读。"""
+    if g.staff.get("role") != "admin":
+        return fail(403, "仅 admin 可查看身份证号")
+    u = user_repo.get(uid)
+    if not u:
+        return fail(404, "用户不存在")
+    return ok({"id_card": u.get("id_card") or ""})
 
 
 @bp.get("/users/<uid>/addresses")
@@ -1898,12 +2341,17 @@ def user_addresses(uid):
 
 @bp.get("/staffs")
 def list_staffs():
+    # 名单含用户名/角色，等于超管账号清单，仅 admin 可读
+    if g.staff.get("role") != "admin":
+        return fail(403, "仅 admin 可查看工作人员")
     items = [_safe_staff(s) for s in staff_repo.list()]
     return ok({"list": items, "total": len(items)})
 
 
 @bp.get("/staffs/<int:sid>")
 def get_staff(sid):
+    if g.staff.get("role") != "admin" and g.staff["id"] != sid:
+        return fail(403, "无权查看他人")
     s = staff_repo.get(sid)
     if not s:
         return fail(404, "工作人员不存在")
@@ -1971,7 +2419,7 @@ def delete_staff(sid):
 
 @bp.post("/staffs/<int:sid>/password")
 def change_password(sid):
-    """改密：本人需提供 old_password；admin 改他人可省略 old_password。"""
+    """改密：admin 改任何账号（含自己）都无需 old_password；非 admin 改自己需提供 old_password。"""
     s = staff_repo.get(sid)
     if not s:
         return fail(404, "工作人员不存在")
@@ -1983,7 +2431,8 @@ def change_password(sid):
     is_admin = g.staff.get("role") == "admin"
     if not is_self and not is_admin:
         return fail(403, "无权改他人密码")
-    if is_self and not verify_password(old_pw, s.get("password_hash", "")):
+    # admin 拥有全量改密权，改自己也免原密码；普通角色改自己必须验原密码
+    if is_self and not is_admin and not verify_password(old_pw, s.get("password_hash", "")):
         return fail(1, "原密码错误")
 
     try:
