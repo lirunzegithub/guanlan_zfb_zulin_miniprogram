@@ -1015,6 +1015,15 @@ def _order_view(o: dict, *, user_map: dict | None = None,
         time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sh)) if sh else ""
     )
 
+    # 真实签收（顺丰轨迹驱动跳变时才有）。运营核对"归还日为什么和下单时不一样"
+    # 全靠这两个字段：签收时间 + 被改写前的原始物流期。
+    dv = int(o.get("delivered_at") or 0)
+    out["delivered_at_text"] = (
+        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(dv)) if dv else ""
+    )
+    out["delivered_source"] = o.get("delivered_source") or ""
+    out["ship_days_planned"] = int(o.get("ship_days_planned") or 0)
+
     # 归还物流（用户寄回）
     rlc = (o.get("return_logistics_company") or "").upper()
     rcourier = logistics.get(rlc) if rlc else None

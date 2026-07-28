@@ -247,6 +247,45 @@
         </div>
       </div>
 
+      <div class="form-field">
+        <label class="form-label">顺丰丰桥 · 顾客编码</label>
+        <input class="input mono" type="text" v-model.trim="form.sf_partner_id" placeholder="丰桥开放平台申请后获得的 partnerID" />
+        <div class="form-hint">
+          注意是<b>丰桥顾客编码</b>，不是月结卡号，两者不是一回事。
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">顺丰丰桥 · 校验码</label>
+        <input class="input mono" type="password" v-model.trim="form.sf_check_word" placeholder="与顾客编码配对的 checkWord" />
+        <div class="form-hint">
+          只在本机参与签名计算，不会发送给顺丰以外的任何一方。
+          <b>与顾客编码两者都填齐才算对接</b>；任一留空 = 未对接，顺丰单与其它快递一样
+          按「发货时间 + 物流免租期」到点自动转「租赁中」（即对接前的老行为）。
+          <br>
+          配齐后：顺丰单改由<b>真实签收轨迹</b>驱动「待收货 → 租赁中」，且签收早于约定物流期时，
+          归还日按真实签收<b>相应提前</b>（用机天数不变、金额不变）。
+          查询失败或轨迹里查不到签收，一律回落到上面的定时器保底，订单不会卡住。
+        </div>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">顺丰环境</label>
+        <div class="seg-row">
+          <label class="seg">
+            <input type="radio" :value="false" v-model="form.sf_sandbox" />
+            <span>生产（默认）</span>
+          </label>
+          <label class="seg">
+            <input type="radio" :value="true" v-model="form.sf_sandbox" />
+            <span>沙箱（联调）</span>
+          </label>
+        </div>
+        <div class="form-hint">
+          沙箱与生产的凭据<b>不通用</b>，切换环境必须同时换上面两项。联调完务必切回生产。
+        </div>
+      </div>
+
       <div class="form-field danger">
         <label class="form-label">公网域名（图片 / 支付宝回调）</label>
         <input class="input mono" type="text" v-model.trim="form.notify_base" placeholder="如 https://your-domain.com" />
@@ -341,6 +380,9 @@ export default {
       min_price_floor:        20,
       inventory_api_token:    '',
       ship_huohao_required:   false,
+      sf_partner_id:          '',
+      sf_check_word:          '',
+      sf_sandbox:             false,
     });
     const msg = ref(null);
     const logoUploading = ref(false);

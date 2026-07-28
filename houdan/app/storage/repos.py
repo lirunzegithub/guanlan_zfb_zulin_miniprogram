@@ -199,6 +199,13 @@ order_repo = SqliteRepository(
         "coupon_discount": 0.0, "discount_amount": 0.0,
         "price_tiers": [],
         "start_date": "", "end_date": "", "ship_days": 0,
+        # 真实签收留痕（顺丰轨迹驱动跳变时落）。老订单与非顺丰单恒为 0 / ""。
+        #   delivered_at      真实签收时间 unix 秒
+        #   delivered_source  签收信息来源："sf" = 顺丰轨迹；"" = 没拿到，走的定时器保底
+        #   ship_days_planned 下单时约定的物流免租期原值。提前签收会把 ship_days
+        #                     改写成真实物流天数并据此重算 end_date，原值存这里备查，
+        #                     不然改完就再也说不清"当初答应用户几天免租"了。
+        "delivered_at": 0, "delivered_source": "", "ship_days_planned": 0,
         # 用户下单时填的备注（确认订单页「备注」行）。与 order_note_repo 完全不同：
         # 那个是后台工作人员的审计日志，用户看不见；这个是用户写给商家的，双方可见。
         # payload 是 JSON blob，老订单没这个 key，读取处一律 .get() 兜底，无需迁移。

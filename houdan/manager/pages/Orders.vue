@@ -302,6 +302,15 @@
               租期：{{ detail.start_date }} 至 {{ detail.end_date }}
               <span v-if="detail.ship_days">（含物流 {{ detail.ship_days }} 天）</span>
             </div>
+            <!-- 顺丰真实签收早于约定物流期时，归还日已按真实签收重算，这里说明来龙去脉，
+                 否则运营看到归还日和用户下单时看到的不一致会以为出了 bug -->
+            <div class="muted" v-if="detail.delivered_at_text">
+              实际签收：{{ detail.delivered_at_text }}
+              <span v-if="detail.delivered_source === 'sf'">（顺丰轨迹）</span>
+              <span v-if="detail.ship_days_planned && detail.ship_days_planned !== detail.ship_days">
+                ，提前签收，物流期按实际 {{ detail.ship_days }} 天计（原定 {{ detail.ship_days_planned }} 天），归还日已相应提前
+              </span>
+            </div>
           </div>
           <div class="field">
             <div class="label">金额</div>
