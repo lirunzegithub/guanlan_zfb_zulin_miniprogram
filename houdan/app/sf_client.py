@@ -18,16 +18,15 @@
     空格转 '+'），Python 对应 quote_plus。两者仅在 '*' '~' 上有差异，而 msgData
     是 JSON + 运单号（纯字母数字），不会出现这两个字符，等价。
 
-【已实测确认】2026-07-28 打丰桥沙箱（顾客编码 Y2AE7TV4）验证过：
-    1. 上面的 msgDigest 算法正确——EXP_RECE_QUERY_SFWAYBILL 回 apiResultCode=A1000
-       并带回完整业务数据，而 A1000 必须先过签名校验
+【已实测确认】2026-07-28 打丰桥沙箱（顾客编码 Y2AE7TV4）跑通全链路：
+    1. 上面的 msgDigest 算法正确——正确签名回 A1000，故意改错回 A1006「数字签名无效」
     2. apiResultData 确实是 JSON **字符串**，需二次 json.loads（丰桥的历史设计）
-    3. 网关**先查服务权限、再验签名**：接口没关联到应用时，签名对错都回 A1004，
-       所以 A1004 不要往签名方向排查
-
-【待真机核验】签收轨迹的 opCode 取值（见 _SIGNED_OP_CODES）。路由查询接口尚未
-    关联到应用，等沙箱能调通后按真实轨迹校准。校准前该值取错的后果是可控的：
-    多认 → 提前跳「租赁中」；漏认 → 退化为定时器保底，不会卡单。
+    3. 网关**先查服务权限、再验签名**：接口没关联到应用时签名对错都回 A1004，
+       所以 A1004 不要往签名方向排查，去丰桥后台关联接口
+    4. 轨迹的状态码结构与签收判定，见 _FIRST_STATUS_SIGNED 处的实测码表
+    5. 沙箱是**固定 mock**：任何运单号都回同一份 15 条轨迹，checkPhoneNo 填错也不拦。
+       因此"运单不存在""手机号校验失败"这两种生产行为无法在沙箱验证，
+       代码按"查不到就等下一轮、最终由定时器保底"处理，不依赖它们的具体错误码
 """
 from __future__ import annotations
 
@@ -52,16 +51,27 @@ SF_API_SANDBOX = "https://sfapi-sbox.sf-express.com/std/service"
 # 路由查询服务码
 SERVICE_ROUTE_QUERY = "EXP_RECE_SEARCH_ROUTES"
 
-# 签收轨迹的 opCode。顺丰路由码表里 80 = 已签收；8000 是部分业务线的签收变体，
-# 一并纳入。**拿到真实响应后需核验**——多认一个码会导致订单提前跳「租赁中」，
-# 漏认一个码则退化为定时器保底（不致命，但对接就白做了）。
-# 兜底：opCode 对不上时再看 remark 里有没有"签收"字样，见 _pick_signed_route。
-_SIGNED_OP_CODES = frozenset({"80", "8000"})
+# 【签收判定】实测沙箱真实轨迹后确定（2026-07-28）。顺丰同时给两套码：
+#
+#   opCode  firstStatusCode/Name  secondaryStatusCode/Name
+#     50          1 已揽收               101 已揽收
+#   30/36/31      2 运送中               201 运送中
+#    204          3 派送中               301 派送中
+#     80          4 已签收               401 已签收
+#
+# 以 firstStatusCode 为准，opCode 只在它缺失时兜底：
+#   ① firstStatusCode 是顺丰对外承诺的**标准状态**，opCode 是内部操作码，
+#      同一状态能对应好几个 opCode（运送中就有 30/36/31 三个），码表也更易变；
+#   ② 更要紧的是「退件签收」——包裹退回商家、商家签收，那是设备正在回来的路上，
+#      绝不能判成用户收到货。标准状态里退件签收是独立取值，用 firstStatusCode
+#      天然区分得开；只看 opCode 或只看 remark 里的"已签收"字样则会误判，
+#      后果是订单错误跳「租赁中」并把归还日算早。
+_FIRST_STATUS_SIGNED = "4"          # firstStatusCode：已签收
+_SIGNED_OP_CODES = frozenset({"80"})  # 仅在 firstStatusCode 缺失时启用
 
-# 轨迹 remark 关键词兜底。顺丰改码表的历史不少，opCode 认不出时用中文兜一层。
-# 注意排除"未签收""拒收"这类反义词，否则会把失败派送误判成签收。
-_SIGNED_KEYWORDS = ("已签收", "被签收", "签收人")
-_SIGNED_NEGATIVE = ("未签收", "拒收", "退回", "签收失败")
+# 负向词：命中即一票否决，压过上面所有正向判定。
+# "退件签收""拒收后退回"这类 remark 里都带"签收"二字，是最危险的误判来源。
+_SIGNED_NEGATIVE = ("未签收", "拒收", "退件", "退回", "签收失败", "派送失败")
 
 # 返回状态码
 STATUS_SIGNED          = "signed"           # 已签收，payload = 签收时间 unix 秒
@@ -165,13 +175,15 @@ def _parse_accept_time(s: str) -> int:
 
 
 def _is_signed_route(route: dict) -> bool:
-    """单条轨迹是不是「已签收」。opCode 优先，中文 remark 兜底。"""
-    if str(route.get("opCode") or "").strip() in _SIGNED_OP_CODES:
-        return True
-    remark = str(route.get("remark") or "")
-    if any(neg in remark for neg in _SIGNED_NEGATIVE):
-        return False        # "未签收""拒收"含"签收"二字，必须先排除
-    return any(kw in remark for kw in _SIGNED_KEYWORDS)
+    """单条轨迹是不是「用户已签收」。判定顺序见 _FIRST_STATUS_SIGNED 处的说明。"""
+    # 负向词一票否决，先于任何正向判定
+    if any(neg in str(route.get("remark") or "") for neg in _SIGNED_NEGATIVE):
+        return False
+    first = str(route.get("firstStatusCode") or "").strip()
+    if first:
+        return first == _FIRST_STATUS_SIGNED
+    # firstStatusCode 缺失（老响应/异常结构）才退回内部操作码
+    return str(route.get("opCode") or "").strip() in _SIGNED_OP_CODES
 
 
 def _pick_signed_route(routes: list) -> int:
