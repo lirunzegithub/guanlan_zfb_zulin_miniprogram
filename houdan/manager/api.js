@@ -126,9 +126,15 @@ export const api = {
   alipaySelfcheck: (probe = true) =>
     http.get('/settings/alipay-selfcheck', { params: { probe: probe ? 1 : 0 } }),
 
-  // 顺丰对接自检（只读诊断）。运单号选填，填了会连签收判定一起验
-  sfSelfcheck: (waybillNo = '') =>
-    http.get('/settings/sf-selfcheck', waybillNo ? { params: { waybill_no: waybillNo } } : undefined),
+  // 顺丰对接自检（只读诊断）。运单号选填，填了会连签收判定一起验；
+  // 手机号后四位更是选填，只在不带它查不到时才用来做对照（判定能否批量查询）
+  sfSelfcheck: (waybillNo = '', checkPhone = '') => {
+    const params = {};
+    if (waybillNo)  params.waybill_no  = waybillNo;
+    if (checkPhone) params.check_phone = checkPhone;
+    return http.get('/settings/sf-selfcheck',
+      Object.keys(params).length ? { params } : undefined);
+  },
 
   // 工作人员密码
   changePassword: (sid, oldPw, newPw) =>

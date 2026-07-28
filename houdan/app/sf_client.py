@@ -273,15 +273,40 @@ def _item(key: str, label: str, status: str, detail: str = "", hint: str = "") -
     return {"key": key, "label": label, "status": status, "detail": detail, "hint": hint}
 
 
-def selfcheck(waybill_no: str = "") -> dict:
+def _route_query(waybill_no: str, check_phone: str = "") -> tuple[bool, object, str, list]:
+    """路由查询的裸调用，回 (ok, 数据/错误消息, 网关码, 轨迹列表)。自检与正式链路共用。"""
+    msg_data: dict = {
+        "trackingType": "1", "trackingNumber": [waybill_no], "methodType": "1",
+    }
+    digits = "".join(ch for ch in (check_phone or "") if ch.isdigit())
+    if len(digits) >= 4:
+        msg_data["checkPhoneNo"] = digits[-4:]
+
+    ok, data, code = _post(SERVICE_ROUTE_QUERY, msg_data)
+    routes: list = []
+    if ok:
+        for it in (data or {}).get("routeResps") or []:
+            if isinstance(it, dict):
+                routes.extend(it.get("routes") or [])
+    return ok, data, code, routes
+
+
+def selfcheck(waybill_no: str = "", check_phone: str = "") -> dict:
     """顺丰对接自检。只读，不改任何配置、不碰订单。
 
     Args:
-        waybill_no: 可选。填了就顺带把签收判定也跑一遍，能直接看出这个单
-                    会不会被判成"已签收"；不填只探连通性和鉴权。
+        waybill_no:  可选。填了就顺带把签收判定也跑一遍，能直接看出这个单
+                     会不会被判成"已签收"；不填只探连通性和鉴权。
+        check_phone: 可选，该运单收件人手机号（后四位即可）。
 
-    Returns:
-        {summary: {...}, items: [...], routes: [...]}  与支付宝自检同构，前端复用同一套样式
+    【为什么要能分别测「带/不带手机号」】
+    顺丰的 checkPhoneNo 是防爬机制：查非月结卡号下的运单必须传，查自己月结
+    卡号下的可以不传。这条直接决定请求量能不能降一个量级——
+      不传可行 → trackingNumber 是数组，一次能查 N 单
+      必须传   → checkPhoneNo 是全局单值，各单收件人不同，只能一单一查
+    沙箱是固定 mock，填对填错都不校验，验不出来，只能拿生产真实单实测。
+    所以自检固定先不带手机号打一次；填了手机号则再打一次做对照，
+    两次结果一比就知道该走哪条路。
     """
     partner = (settings.get("sf_partner_id") or "").strip()
     check_word = (settings.get("sf_check_word") or "").strip()
@@ -313,23 +338,14 @@ def selfcheck(waybill_no: str = "") -> dict:
                        "沙箱只回固定的模拟轨迹，任何运单号都返回同一份数据，"
                        "不能用来验证真实订单。正式运营前记得切回生产" if sandbox else ""))
 
-    # ② 网关连通 + 鉴权 + 接口权限（一次调用同时验这三件事）
+    # ② 网关连通 + 鉴权 + 接口权限（一次调用同时验这三件事）。
+    #    这一发**故意不带 checkPhoneNo**，顺带就把"月结单免校验"验了。
     probe_no = (waybill_no or "").strip().upper() or _PROBE_WAYBILL
-    ok, data, code = _post(SERVICE_ROUTE_QUERY, {
-        "trackingType": "1", "trackingNumber": [probe_no], "methodType": "1",
-    })
-    routes: list = []
+    ok, data, code, routes = _route_query(probe_no)
     if code == "A1000":
         # 网关放行即代表编码/签名/接口权限全部正确；业务层查不到运单是另一回事
         items.append(_item("gateway", "网关鉴权通过", "ok",
                            "顾客编码、校验码、路由查询接口权限均正常（apiResultCode=A1000）"))
-        if ok:
-            for it in (data or {}).get("routeResps") or []:
-                if isinstance(it, dict):
-                    routes.extend(it.get("routes") or [])
-        else:
-            items.append(_item("business", "接口通了，但这个运单查不到轨迹", "warn",
-                               str(data), "换一个真实的顺丰运单号再试"))
     elif code:
         items.append(_item("gateway", "网关拒绝", "fail", str(data),
                            "按上面括号里的错误码处置；A1004 是接口权限没开，"
@@ -338,7 +354,44 @@ def selfcheck(waybill_no: str = "") -> dict:
         items.append(_item("gateway", "连不上顺丰网关", "fail", str(data),
                            "检查服务器出网、以及丰桥后台的 IP 白名单是否已加本机公网 IP"))
 
-    # ③ 签收判定（只有真拿到轨迹才跑）
+    # ③ 月结免校验：决定能不能批量查询，是请求量能否降一个量级的关键
+    phone_used = False
+    if code == "A1000" and (waybill_no or "").strip():
+        if ok:
+            items.append(_item(
+                "batch",
+                "月结免校验可用" + ("（沙箱结论不作数）" if sandbox else "，可开批量查询"),
+                "warn" if sandbox else "ok",
+                "不带 checkPhoneNo 也查到了轨迹",
+                "沙箱是固定 mock，填对填错都不校验，这条结论只有在生产环境才算数"
+                if sandbox else
+                "trackingNumber 是数组，可一次查多单，请求量能从「每单每次」降到「每轮一次」",
+            ))
+        elif (check_phone or "").strip():
+            # 不带手机号查不到 → 带上再打一次做对照，区分"必须带手机号"和"单号本身有问题"
+            ok2, data2, code2, routes2 = _route_query(probe_no, check_phone)
+            phone_used = True
+            if ok2:
+                routes, ok, data = routes2, ok2, data2
+                items.append(_item(
+                    "batch", "必须带手机号校验", "warn",
+                    "不带 checkPhoneNo 查不到，带上后正常返回",
+                    "checkPhoneNo 是全局单值、各单收件人不同，因此只能保持一单一查（当前实现即是）",
+                ))
+            else:
+                items.append(_item(
+                    "batch", "带不带手机号都查不到", "warn",
+                    f"不带：{str(data)[:60]}；带上：{str(data2)[:60]}",
+                    "多半是运单号本身的问题——确认它是这个月结卡号发出的、且顺丰已有轨迹",
+                ))
+        else:
+            items.append(_item(
+                "business", "接口通了，但这个运单查不到轨迹", "warn", str(data),
+                "若这单确实存在，填上收件人手机号后四位再测一次——"
+                "顺丰对非月结卡号下的运单要求手机号校验",
+            ))
+
+    # ④ 签收判定（只有真拿到轨迹才跑）
     if routes:
         signed_at = _pick_signed_route(routes)
         if signed_at:
@@ -363,7 +416,8 @@ def selfcheck(waybill_no: str = "") -> dict:
     return {
         "summary": {"overall": overall, "configured": True, "sandbox": sandbox,
                     "partner_id": partner, "waybill_no": probe_no,
-                    "probed_with_placeholder": not (waybill_no or "").strip(), **counts},
+                    "probed_with_placeholder": not (waybill_no or "").strip(),
+                    "phone_used": phone_used, **counts},
         "items": items,
         # 只回最近 12 条，够运营肉眼核对，又不至于把整页刷屏
         "routes": [

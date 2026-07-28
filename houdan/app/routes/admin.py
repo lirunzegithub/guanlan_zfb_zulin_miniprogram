@@ -2497,13 +2497,21 @@ def admin_alipay_selfcheck():
 @bp.get("/settings/sf-selfcheck")
 def admin_sf_selfcheck():
     """顺丰对接自检：连通性 + 鉴权 + 接口权限，可选带运单号连签收判定一起验。
-    只读诊断，不改配置、不碰订单。?waybill_no= 选填。
+    只读诊断，不改配置、不碰订单。
+
+    ?waybill_no=  选填，真实顺丰运单号
+    ?check_phone= 选填，该运单收件人手机号后四位。只在不带手机号查不到时才会
+                  用它再打一次做对照，用来判定「月结单是否免手机号校验」——
+                  这条决定了能否改成批量查询。
     """
     if g.staff.get("role") != "admin":
         return fail(403, "仅 admin 可执行顺丰自检")
     from app import sf_client
     try:
-        result = sf_client.selfcheck((request.args.get("waybill_no") or "").strip())
+        result = sf_client.selfcheck(
+            (request.args.get("waybill_no") or "").strip(),
+            (request.args.get("check_phone") or "").strip(),
+        )
     except Exception as e:
         return fail(1, f"自检执行异常：{e}")
     return ok(result)

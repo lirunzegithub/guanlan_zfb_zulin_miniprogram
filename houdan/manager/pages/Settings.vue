@@ -299,11 +299,18 @@
             <div class="sc-desc">
               一次验三件事：能否连上顺丰网关、顾客编码与校验码对不对、路由查询接口权限是否已开通。
               填了运单号还会把「签收判定」一起跑一遍，直接看出这个单会不会被判成已签收。仅只读诊断，不改配置、不碰订单。
+              <br>
+              测试固定<b>先不带手机号</b>查一次，顺带验证「月结单是否免手机号校验」——这条决定能否改成批量查询、把请求量降一个量级。
+              只有在不带手机号查不到时，才会用你填的手机号再打一次做对照。<b>沙箱不校验手机号，此结论只在生产环境才作数。</b>
             </div>
           </div>
-          <div class="row" style="gap:8px">
-            <input class="input mono" style="width:190px" v-model.trim="sf.waybill"
-                   placeholder="运单号（选填）" @keyup.enter="runSfCheck" />
+          <div class="row" style="gap:8px; align-items:flex-start">
+            <div>
+              <input class="input mono" style="width:190px" v-model.trim="sf.waybill"
+                     placeholder="运单号（选填）" @keyup.enter="runSfCheck" />
+              <input class="input mono" style="width:190px; margin-top:6px" v-model.trim="sf.phone"
+                     placeholder="收件人手机后四位（选填）" @keyup.enter="runSfCheck" />
+            </div>
             <button class="btn" :disabled="sf.running" @click="runSfCheck">
               {{ sf.running ? '测试中…' : '测试连接' }}
             </button>
@@ -319,6 +326,7 @@
             <template v-if="sf.result.summary.waybill_no">
               · 测试运单 <code>{{ sf.result.summary.waybill_no }}</code>
               <span v-if="sf.result.summary.probed_with_placeholder" class="muted">（占位号，仅探连通性）</span>
+              <span v-if="sf.result.summary.phone_used" class="muted">（已带手机号重试）</span>
             </template>
             · 通过 {{ sf.result.summary.ok }} / 警告 {{ sf.result.summary.warn }} / 失败 {{ sf.result.summary.fail }}
           </div>
@@ -466,13 +474,13 @@ export default {
     // ── 顺丰对接自检 ──
     // 用刚保存的配置去打顺丰，所以有未保存改动时先提醒——否则会拿旧凭据测出
     // 一个和眼前表单无关的结果，最容易让人误判成"填对了但还是不通"
-    const sf = reactive({ running: false, waybill: '', result: null, error: '' });
+    const sf = reactive({ running: false, waybill: '', phone: '', result: null, error: '' });
     const runSfCheck = async () => {
       if (dirty.value && !confirm('顺丰测试用的是「已保存」的配置，当前有未保存的改动。\n继续测试？（建议先保存再测）')) return;
       sf.running = true;
       sf.error = '';
       try {
-        sf.result = await api.sfSelfcheck(sf.waybill);
+        sf.result = await api.sfSelfcheck(sf.waybill, sf.phone);
       } catch (e) {
         sf.error = e.message || '测试失败';
       } finally {
