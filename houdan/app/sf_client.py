@@ -100,12 +100,17 @@ def _sign(msg_data: str, timestamp: str, check_word: str) -> str:
     return base64.b64encode(hashlib.md5(raw.encode("utf-8")).digest()).decode("ascii")
 
 
-def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str]:
-    """调丰桥网关。返回 (ok, 业务数据 or 错误消息)。不抛异常。"""
+def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str, str]:
+    """调丰桥网关。返回 (ok, 业务数据 or 错误消息, 网关错误码)。不抛异常。
+
+    第三个返回值给自检用：网关码能区分"权限没开(A1004)"和"校验码错(A1006)"，
+    而这两种在用户看来都只是"调不通"，不告诉他具体是哪种就只能瞎试。
+    没走到网关（未配置/网络失败）时为空串。
+    """
     partner_id = (settings.get("sf_partner_id") or "").strip()
     check_word = (settings.get("sf_check_word") or "").strip()
     if not (partner_id and check_word):
-        return False, "未配置顺丰丰桥凭据"
+        return False, "未配置顺丰丰桥凭据", ""
 
     # separators 去掉空格：签名对 msgData 逐字节敏感，序列化结果必须与上行完全一致
     payload = json.dumps(msg_data, ensure_ascii=False, separators=(",", ":"))
@@ -126,7 +131,7 @@ def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str]:
         )
         body = resp.json()
     except (requests.RequestException, ValueError) as e:
-        return False, f"顺丰接口请求失败：{e}"
+        return False, f"顺丰接口请求失败：{e}", ""
 
     # 网关层：A1000 = 成功，其余都是鉴权/限流/参数问题
     code = body.get("apiResultCode") or ""
@@ -136,9 +141,11 @@ def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str]:
             # 实测：接口没关联到应用时签名对错都回这个码，别往签名方向排查
             hint = (f"——该顾客编码没有「{service_code}」的服务权限，"
                     f"需在丰桥应用里关联该接口并完成沙箱联调后申请上线")
+        elif code == "A1006":
+            hint = "——校验码填错了，或沙箱/生产环境与校验码不匹配"
         return False, (
             f"顺丰网关拒绝（{code}）：{body.get('apiErrorMsg') or '无错误描述'}{hint}"
-        )
+        ), code
 
     # 业务层数据被包成 JSON 字符串再塞回来，需要二次解析
     raw = body.get("apiResultData")
@@ -146,15 +153,15 @@ def _post(service_code: str, msg_data: dict) -> tuple[bool, dict | str]:
         try:
             raw = json.loads(raw or "{}")
         except ValueError:
-            return False, "顺丰返回的 apiResultData 不是合法 JSON"
+            return False, "顺丰返回的 apiResultData 不是合法 JSON", code
     if not isinstance(raw, dict):
-        return False, "顺丰返回结构异常"
+        return False, "顺丰返回结构异常", code
 
     if not raw.get("success"):
         return False, (
             f"顺丰业务失败（{raw.get('errorCode')}）：{raw.get('errorMsg') or '无错误描述'}"
-        )
-    return True, raw.get("msgData") or {}
+        ), code
+    return True, raw.get("msgData") or {}, code
 
 
 def _parse_accept_time(s: str) -> int:
@@ -232,7 +239,7 @@ def query_signed_at(waybill_no: str, check_phone: str = "") -> tuple[str, int | 
     if len(digits) >= 4:
         msg_data["checkPhoneNo"] = digits[-4:]
 
-    ok, data = _post(SERVICE_ROUTE_QUERY, msg_data)
+    ok, data, _code = _post(SERVICE_ROUTE_QUERY, msg_data)
     if not ok:
         return STATUS_ERROR, str(data)
 
@@ -253,3 +260,121 @@ def query_signed_at(waybill_no: str, check_phone: str = "") -> tuple[str, int | 
     if signed_at:
         return STATUS_SIGNED, signed_at
     return STATUS_IN_TRANSIT, ""
+
+
+# ============ 后台设置页的「测试连接」自检 ============
+
+# 不传运单号时用它探连通性。生产环境下这个号必然查不到，但那不影响判断——
+# 我们要的是网关层的 apiResultCode：能回 A1000 就说明编码/校验码/接口权限全通了。
+_PROBE_WAYBILL = "SF0000000000000"
+
+
+def _item(key: str, label: str, status: str, detail: str = "", hint: str = "") -> dict:
+    return {"key": key, "label": label, "status": status, "detail": detail, "hint": hint}
+
+
+def selfcheck(waybill_no: str = "") -> dict:
+    """顺丰对接自检。只读，不改任何配置、不碰订单。
+
+    Args:
+        waybill_no: 可选。填了就顺带把签收判定也跑一遍，能直接看出这个单
+                    会不会被判成"已签收"；不填只探连通性和鉴权。
+
+    Returns:
+        {summary: {...}, items: [...], routes: [...]}  与支付宝自检同构，前端复用同一套样式
+    """
+    partner = (settings.get("sf_partner_id") or "").strip()
+    check_word = (settings.get("sf_check_word") or "").strip()
+    sandbox = bool(settings.get("sf_sandbox"))
+    items: list[dict] = []
+
+    # ① 凭据齐备性（离线）
+    if partner and check_word:
+        items.append(_item("cred", "凭据已配置", "ok",
+                           f"顾客编码 {partner}，校验码 {len(check_word)} 位"))
+    else:
+        missing = "、".join(
+            n for n, v in (("顾客编码", partner), ("校验码", check_word)) if not v
+        )
+        items.append(_item(
+            "cred", "凭据不完整", "fail", f"缺少：{missing}",
+            "两项都填齐才会启用顺丰签收链路。留空不影响下单收款——"
+            "顺丰单会和其它快递一样，按「发货时间 + 物流免租期」到点自动转「租赁中」",
+        ))
+        return {
+            "summary": {"overall": "fail", "configured": False, "sandbox": sandbox,
+                        "partner_id": partner, "ok": 0, "warn": 0, "fail": 1},
+            "items": items, "routes": [],
+        }
+
+    items.append(_item("env", f"当前环境：{'沙箱（联调）' if sandbox else '生产'}",
+                       "warn" if sandbox else "ok",
+                       _api_base(),
+                       "沙箱只回固定的模拟轨迹，任何运单号都返回同一份数据，"
+                       "不能用来验证真实订单。正式运营前记得切回生产" if sandbox else ""))
+
+    # ② 网关连通 + 鉴权 + 接口权限（一次调用同时验这三件事）
+    probe_no = (waybill_no or "").strip().upper() or _PROBE_WAYBILL
+    ok, data, code = _post(SERVICE_ROUTE_QUERY, {
+        "trackingType": "1", "trackingNumber": [probe_no], "methodType": "1",
+    })
+    routes: list = []
+    if code == "A1000":
+        # 网关放行即代表编码/签名/接口权限全部正确；业务层查不到运单是另一回事
+        items.append(_item("gateway", "网关鉴权通过", "ok",
+                           "顾客编码、校验码、路由查询接口权限均正常（apiResultCode=A1000）"))
+        if ok:
+            for it in (data or {}).get("routeResps") or []:
+                if isinstance(it, dict):
+                    routes.extend(it.get("routes") or [])
+        else:
+            items.append(_item("business", "接口通了，但这个运单查不到轨迹", "warn",
+                               str(data), "换一个真实的顺丰运单号再试"))
+    elif code:
+        items.append(_item("gateway", "网关拒绝", "fail", str(data),
+                           "按上面括号里的错误码处置；A1004 是接口权限没开，"
+                           "A1006 是校验码或环境不对"))
+    else:
+        items.append(_item("gateway", "连不上顺丰网关", "fail", str(data),
+                           "检查服务器出网、以及丰桥后台的 IP 白名单是否已加本机公网 IP"))
+
+    # ③ 签收判定（只有真拿到轨迹才跑）
+    if routes:
+        signed_at = _pick_signed_route(routes)
+        if signed_at:
+            items.append(_item(
+                "verdict", "该运单判定为「已签收」", "ok",
+                f"签收时间 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(signed_at))}"
+                f"（共 {len(routes)} 条轨迹）",
+                "真实订单走到这一步就会从「待收货」转「租赁中」",
+            ))
+        else:
+            items.append(_item(
+                "verdict", "该运单尚未签收", "ok",
+                f"拉到 {len(routes)} 条轨迹，其中没有签收记录",
+                "在途属正常。订单会保持「待收货」，到物流免租期仍未签收则由保底推进",
+            ))
+
+    counts = {"ok": 0, "warn": 0, "fail": 0}
+    for it in items:
+        counts[it["status"]] = counts.get(it["status"], 0) + 1
+    overall = "fail" if counts["fail"] else ("warn" if counts["warn"] else "ok")
+
+    return {
+        "summary": {"overall": overall, "configured": True, "sandbox": sandbox,
+                    "partner_id": partner, "waybill_no": probe_no,
+                    "probed_with_placeholder": not (waybill_no or "").strip(), **counts},
+        "items": items,
+        # 只回最近 12 条，够运营肉眼核对，又不至于把整页刷屏
+        "routes": [
+            {
+                "time":   r.get("acceptTime") or "",
+                "status": r.get("secondaryStatusName") or r.get("firstStatusName") or "",
+                "op":     str(r.get("opCode") or ""),
+                "first":  str(r.get("firstStatusCode") or ""),
+                "signed": _is_signed_route(r),
+                "remark": (r.get("remark") or "")[:80],
+            }
+            for r in routes[-12:] if isinstance(r, dict)
+        ],
+    }

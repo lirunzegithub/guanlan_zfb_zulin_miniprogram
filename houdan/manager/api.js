@@ -126,6 +126,10 @@ export const api = {
   alipaySelfcheck: (probe = true) =>
     http.get('/settings/alipay-selfcheck', { params: { probe: probe ? 1 : 0 } }),
 
+  // 顺丰对接自检（只读诊断）。运单号选填，填了会连签收判定一起验
+  sfSelfcheck: (waybillNo = '') =>
+    http.get('/settings/sf-selfcheck', waybillNo ? { params: { waybill_no: waybillNo } } : undefined),
+
   // 工作人员密码
   changePassword: (sid, oldPw, newPw) =>
     http.post(`/staffs/${sid}/password`, { old_password: oldPw, new_password: newPw }),

@@ -2494,6 +2494,21 @@ def admin_alipay_selfcheck():
     return ok(result)
 
 
+@bp.get("/settings/sf-selfcheck")
+def admin_sf_selfcheck():
+    """顺丰对接自检：连通性 + 鉴权 + 接口权限，可选带运单号连签收判定一起验。
+    只读诊断，不改配置、不碰订单。?waybill_no= 选填。
+    """
+    if g.staff.get("role") != "admin":
+        return fail(403, "仅 admin 可执行顺丰自检")
+    from app import sf_client
+    try:
+        result = sf_client.selfcheck((request.args.get("waybill_no") or "").strip())
+    except Exception as e:
+        return fail(1, f"自检执行异常：{e}")
+    return ok(result)
+
+
 # =========================== 预授权扣款（信用免押方案 A） =========================== #
 # 接口：
 #   POST /api/admin/orders/<oid>/charges       发起一笔扣款（alipay.trade.pay）

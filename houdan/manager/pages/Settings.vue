@@ -286,6 +286,69 @@
         </div>
       </div>
 
+      <!-- ===== 顺丰对接自检 ===== -->
+      <div class="selfcheck">
+        <div class="sc-head">
+          <div>
+            <div class="sc-title">
+              顺丰对接测试
+              <span v-if="sf.result" :class="['sc-badge', 'sc-'+sf.result.summary.overall]">
+                {{ overallLabel(sf.result.summary.overall) }}
+              </span>
+            </div>
+            <div class="sc-desc">
+              一次验三件事：能否连上顺丰网关、顾客编码与校验码对不对、路由查询接口权限是否已开通。
+              填了运单号还会把「签收判定」一起跑一遍，直接看出这个单会不会被判成已签收。仅只读诊断，不改配置、不碰订单。
+            </div>
+          </div>
+          <div class="row" style="gap:8px">
+            <input class="input mono" style="width:190px" v-model.trim="sf.waybill"
+                   placeholder="运单号（选填）" @keyup.enter="runSfCheck" />
+            <button class="btn" :disabled="sf.running" @click="runSfCheck">
+              {{ sf.running ? '测试中…' : '测试连接' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="sf.error" class="sc-err">{{ sf.error }}</div>
+
+        <template v-if="sf.result">
+          <div class="sc-summary">
+            顾客编码 <code>{{ sf.result.summary.partner_id || '未配置' }}</code>
+            · 环境 <code>{{ sf.result.summary.sandbox ? '沙箱' : '生产' }}</code>
+            <template v-if="sf.result.summary.waybill_no">
+              · 测试运单 <code>{{ sf.result.summary.waybill_no }}</code>
+              <span v-if="sf.result.summary.probed_with_placeholder" class="muted">（占位号，仅探连通性）</span>
+            </template>
+            · 通过 {{ sf.result.summary.ok }} / 警告 {{ sf.result.summary.warn }} / 失败 {{ sf.result.summary.fail }}
+          </div>
+
+          <ul class="sc-list">
+            <li v-for="it in sf.result.items" :key="it.key" :class="'sc-'+it.status">
+              <span class="sc-ico">{{ statusIco(it.status) }}</span>
+              <div class="sc-body">
+                <div class="sc-label">{{ it.label }}</div>
+                <div v-if="it.detail" class="sc-detail">{{ it.detail }}</div>
+                <div v-if="it.hint" class="sc-hint">建议：{{ it.hint }}</div>
+              </div>
+            </li>
+          </ul>
+
+          <div v-if="sf.result.routes.length" class="sc-fp">
+            <div class="sc-fp-title">
+              最近 {{ sf.result.routes.length }} 条轨迹（✅ 标记的那条即判定为签收的依据）
+            </div>
+            <div v-for="(r, i) in sf.result.routes" :key="i" class="sf-route">
+              <span class="sf-mark">{{ r.signed ? '✅' : '·' }}</span>
+              <code class="sf-time">{{ r.time }}</code>
+              <span class="sf-st">{{ r.status }}</span>
+              <code class="sf-code">op={{ r.op }} first={{ r.first }}</code>
+              <span class="sf-remark">{{ r.remark }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+
       <div class="form-field danger">
         <label class="form-label">公网域名（图片 / 支付宝回调）</label>
         <input class="input mono" type="text" v-model.trim="form.notify_base" placeholder="如 https://your-domain.com" />
@@ -400,6 +463,23 @@ export default {
         sc.running = false;
       }
     };
+    // ── 顺丰对接自检 ──
+    // 用刚保存的配置去打顺丰，所以有未保存改动时先提醒——否则会拿旧凭据测出
+    // 一个和眼前表单无关的结果，最容易让人误判成"填对了但还是不通"
+    const sf = reactive({ running: false, waybill: '', result: null, error: '' });
+    const runSfCheck = async () => {
+      if (dirty.value && !confirm('顺丰测试用的是「已保存」的配置，当前有未保存的改动。\n继续测试？（建议先保存再测）')) return;
+      sf.running = true;
+      sf.error = '';
+      try {
+        sf.result = await api.sfSelfcheck(sf.waybill);
+      } catch (e) {
+        sf.error = e.message || '测试失败';
+      } finally {
+        sf.running = false;
+      }
+    };
+
     const statusIco = (s) => ({ ok: '✅', warn: '⚠️', fail: '❌' }[s] || '•');
     const overallLabel = (s) => ({ ok: '全部通过', warn: '有警告', fail: '存在异常' }[s] || s);
 
@@ -481,7 +561,8 @@ export default {
 
     onMounted(reload);
     return { auth, isAdmin, loading, saving, form, dirty, msg, reload, save, logoUploading, onLogoPick, absUrl,
-             sc, runSelfcheck, statusIco, overallLabel };
+             sc, runSelfcheck, statusIco, overallLabel,
+             sf, runSfCheck };
   },
 };
 </script>
@@ -620,6 +701,15 @@ export default {
 .sc-fp-row { display: flex; gap: 10px; font-size: 12px; margin: 3px 0; }
 .sc-fp-row span { color: #6b7280; width: 72px; flex-shrink: 0; }
 .sc-fp-row code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #1a1f2e; word-break: break-all; }
+
+/* ===== 顺丰自检的轨迹列表 ===== */
+.sf-route { display: flex; gap: 8px; font-size: 11px; padding: 3px 0; align-items: baseline; border-top: 1px solid #f0f2f6; }
+.sf-route:first-of-type { border-top: none; }
+.sf-mark { width: 14px; flex-shrink: 0; }
+.sf-time { font-family: ui-monospace, Menlo, monospace; color: #4b5563; flex-shrink: 0; }
+.sf-st { color: #1a1f2e; font-weight: 500; width: 52px; flex-shrink: 0; }
+.sf-code { font-family: ui-monospace, Menlo, monospace; color: #9aa3b2; flex-shrink: 0; }
+.sf-remark { color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .toast {
   position: fixed;
