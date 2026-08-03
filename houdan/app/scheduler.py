@@ -8,6 +8,9 @@
   tick_cancel_stale_audit    定期扫 audit 状态订单，超 24h 仍未完成免押/付押金的
                              清理掉（可在后台设置关闭；取消前先向支付宝对账，
                              已冻结成功的推进为待发货而不是取消）
+  tick_retry_rent_capture    定期扫「押金已冻结、首期租金没收上来」的 audit 订单，
+                             重跑一次转支付；成功即 audit → send。没有它，租金转支付
+                             一失败订单就永远卡在待免押（见函数注释）
 
 为什么不用 apscheduler：
   Werkzeug debug=True 的重载机制会让 BackgroundScheduler 出现行为微妙的 race
@@ -44,6 +47,13 @@ _scheduler = None
 # 开关：settings.auto_cancel_stale_audit（后台设置页可关，默认开）。
 # 取消前先向支付宝对账，已冻结成功的推进为待发货，杜绝"已付款订单被取消"。
 AUDIT_TIMEOUT_SECONDS = 24 * 3600
+
+# 租金结算重试：同一订单两次自动重试的最小间隔，以及自动重试次数上限。
+# 每次重试都会真的打一次支付宝 auth_trade_pay，间隔太密没有意义（"处理中"类
+# 错误需要时间收敛），次数封顶是为了让"永久性失败"（如产品未签约）停下来交给人工，
+# 而不是无限期空转。900s × 24 ≈ 6 小时自动重试窗口。
+_RENT_CAPTURE_MIN_GAP = 900
+_RENT_CAPTURE_MAX_ATTEMPTS = 24
 
 
 def _ship_days_for(order: dict) -> int:
@@ -191,8 +201,15 @@ def _reconcile_stale_audit(order: dict) -> str:
     from app.routes.orders import transition_freeze_done
     if res.get("auth_no") and not (order.get("alipay_auth_no") or "").strip():
         order_repo.update(oid, {"alipay_auth_no": res["auth_no"]})
-    transition_freeze_done(oid)
-    logger.warning("tick_cancel_stale_audit: %s 对账发现已冻结成功，推进为待发货（不取消）", oid)
+    after = transition_freeze_done(oid)
+    if (after or {}).get("status") == "send":
+        logger.warning("tick_cancel_stale_audit: %s 对账发现已冻结成功，推进为待发货（不取消）", oid)
+    else:
+        # 冻结成功但租金没收上来。以前这里不校验结果就报"已推进"，订单实际还在
+        # audit，之后每轮都被这个分支跳过，再没人管。现在交给 tick_retry_rent_capture 补收。
+        logger.warning(
+            "tick_cancel_stale_audit: %s 已冻结但租金未结清，保持 audit 等待重试补收（不取消）", oid,
+        )
     return "frozen"
 
 
@@ -220,7 +237,8 @@ def tick_cancel_stale_audit() -> dict:
         return summary
 
     try:
-        candidates = order_repo.list(status="audit")
+        # 新链路多了 pay（待付租金）前置态，与 audit 一起做 24h 死单清理。
+        candidates = order_repo.list(status="pay") + order_repo.list(status="audit")
     except Exception as e:
         logger.warning("tick_cancel_stale_audit list failed: %s", e)
         return summary
@@ -236,10 +254,25 @@ def tick_cancel_stale_audit() -> dict:
 
         try:
             cur = order_repo.get(oid)
-            if not cur or cur.get("status") != "audit":
-                continue  # 已被别的 worker / freeze notify 推进了
+            if not cur or cur.get("status") not in ("pay", "audit"):
+                continue  # 已被别的 worker / 支付回调 / freeze notify 推进了
+            if cur.get("status") == "pay" and (cur.get("rent_out_trade_no") or "").strip():
+                try:
+                    from app.alipay_client import get_client
+                    from app.routes.orders import complete_initial_rent
+                    q = get_client().trade_query(out_trade_no=cur["rent_out_trade_no"])
+                    if (q.get("trade_status") or "").upper() in ("TRADE_SUCCESS", "TRADE_FINISHED"):
+                        complete_initial_rent(
+                            cur["rent_out_trade_no"], trade_no=q.get("trade_no") or "", raw=q,
+                        )
+                        summary["advanced"] += 1
+                        continue
+                except Exception as e:
+                    summary["errors"] += 1
+                    logger.warning("tick_cancel_stale_audit rent query %s failed: %s", oid, e)
+                    continue
             # 取消前对账：只要发起过冻结就先问支付宝，防止取消已付款的订单
-            if int(cur.get("alipay_freeze_attempts") or 0) > 0:
+            if cur.get("status") == "audit" and int(cur.get("alipay_freeze_attempts") or 0) > 0:
                 verdict = _reconcile_stale_audit(cur)
                 if verdict == "frozen":
                     summary["advanced"] += 1
@@ -264,6 +297,72 @@ def tick_cancel_stale_audit() -> dict:
 
     if summary["cancelled"] or summary["advanced"] or summary["errors"]:
         logger.warning("tick_cancel_stale_audit summary: %s", summary)
+    return summary
+
+
+def rent_capture_pending(order: dict) -> bool:
+    """这单是否属于「押金已冻结成功、但首期租金还没结清」。
+
+    后台列表的状态细分与本 tick 共用同一判据，避免两处口径漂移。
+    """
+    return (
+        (order.get("status") or "") == "audit"
+        and bool((order.get("alipay_auth_no") or "").strip())
+        and not order.get("rent_paid_at")
+    )
+
+
+def tick_retry_rent_capture() -> dict:
+    """扫「押金已冻结、租金没收上来」的 audit 订单，重跑一次租金转支付。
+
+    为什么必须有这个兜底：租金转支付失败后，服务端原本没有任何力量会再试——
+      - notify 侧 transition_freeze_done 是"掉头返回"而非抛错，端点照样回
+        success，支付宝不会重推；
+      - 就算回 fail，notify_dedup 在业务处理之前就把通知登记成已处理了，
+        重推会被当重复直接跳过；
+      - 客户端只有用户重新打开订单详情页才触发一次对账。
+    用户不再进来，订单就永远停在"待免押"，而押金已经冻在支付宝。
+
+    幂等性：transition_freeze_done 只在 status==audit 时动作；
+    _capture_initial_rent_from_auth 用固定 out_trade_no（{oid}R）先 query 后 pay，
+    重跑只会查到同一笔交易，不会重复扣款。
+    """
+    from app.storage.repos import order_repo
+    from app.routes.orders import transition_freeze_done
+
+    now = int(time.time())
+    summary = {"scanned": 0, "retried": 0, "advanced": 0, "skipped": 0, "errors": 0}
+
+    try:
+        candidates = order_repo.list(status="audit")
+    except Exception as e:
+        logger.warning("tick_retry_rent_capture list failed: %s", e)
+        return summary
+
+    for o in candidates:
+        oid = o.get("id") or ""
+        if not oid or not rent_capture_pending(o):
+            continue
+        summary["scanned"] += 1
+        # 到顶了：不再自动重试，留给后台「重试租金结算」按钮 / 人工处理
+        if int(o.get("rent_capture_attempts") or 0) >= _RENT_CAPTURE_MAX_ATTEMPTS:
+            summary["skipped"] += 1
+            continue
+        if now - int(o.get("rent_capture_last_at") or 0) < _RENT_CAPTURE_MIN_GAP:
+            summary["skipped"] += 1
+            continue
+        try:
+            summary["retried"] += 1
+            after = transition_freeze_done(oid)
+            if (after or {}).get("status") == "send":
+                summary["advanced"] += 1
+                logger.warning("tick_retry_rent_capture: %s 租金已补收，推进为待发货", oid)
+        except Exception as e:
+            summary["errors"] += 1
+            logger.warning("tick_retry_rent_capture oid=%s err: %s", oid, e)
+
+    if summary["retried"] or summary["errors"]:
+        logger.warning("tick_retry_rent_capture summary: %s", summary)
     return summary
 
 
@@ -421,6 +520,13 @@ def _run_loop() -> None:
             tick_cancel_stale_audit()
         except Exception as e:
             logger.warning("tick_cancel_stale_audit crashed: %s", e)
+        # 顺序上放在死单清理之后：同一轮里刚被补收租金推进为 send 的单，
+        # 清理任务已经扫过了，不会互相打架（两边本身也都是幂等的）。
+        # 实际重试频率由每单的 _RENT_CAPTURE_MIN_GAP 控制，不受本轮间隔影响。
+        try:
+            tick_retry_rent_capture()
+        except Exception as e:
+            logger.warning("tick_retry_rent_capture crashed: %s", e)
         now = int(time.time())
         if now - last_sf >= _SF_TRACK_INTERVAL:
             try:

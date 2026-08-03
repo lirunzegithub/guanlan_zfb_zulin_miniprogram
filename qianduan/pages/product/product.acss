@@ -571,10 +571,15 @@
 }
 .cal-close:active { color: #1a1f2e; }
 
-/* ----- 抽屉顶部：商品摘要（当前规格 + 当前租期的价格） ----- */
+/* ----- 抽屉顶部：商品摘要（当前规格 + 当前租期的价格） -----
+   它在 .rs-body 之外，是抽屉的固定头部：flex-shrink:0 防止被滚动区压扁，
+   底部一条细分割线标出「固定区 / 滚动区」的边界。 */
 .rs-summary {
   display: flex; align-items: center; gap: 18rpx;
   padding: 24rpx 84rpx 18rpx 28rpx;
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 2rpx solid #f0f3f8;
 }
 .rs-thumb {
   width: 112rpx; height: 112rpx;
@@ -624,11 +629,9 @@
   overflow: hidden; text-overflow: ellipsis;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.rs-sku-meta { font-size: 21rpx; color: #6b7280; }
 .rs-sku-item.on { background: #fff; border-color: var(--primary); }
 .rs-sku-item.on .rs-sku-name { color: var(--primary); }
-.rs-sku-item.on .rs-sku-meta { color: #6f9ae8; }
-/* 无货规格仍可点选（让用户看到它的价格），只做视觉弱化 + 角标 */
+/* 无货规格仍可点选（选中后顶部摘要会显示它的价格），只做视觉弱化 + 角标 */
 .rs-sku-item.out { opacity: 0.55; }
 .rs-sku-out {
   flex-shrink: 0;
@@ -682,11 +685,13 @@
 }
 
 /* ----- 滚动区 ----- */
-/* 抽屉中间的唯一滚动区：摘要 / 规格 / 租期 / 日历都在这里滚 */
+/* 抽屉中间的唯一滚动区：规格 / 租期 / 日历都在这里滚
+   （摘要已提到滚动区外做固定头部，这里补回它原先带来的顶部间距） */
 .rs-body {
   flex: 1;
   min-height: 0;
   background: #fff;
+  padding-top: 24rpx;
 }
 .rent-sheet.has-cal { height: 90vh; }
 .cal-body { background: #fff; }
@@ -760,14 +765,16 @@
 .cal-cell--mid .cal-price { color: #8a6a00; }
 .cal-cell--mid .cal-price.is-ship { color: #cc6f00; }
 
-/* 物流期方块：整格独立配色（淡蓝），与选区的黄色明显区分 */
-.cal-cell.is-ship.cal-cell--mid {
+/* 物流期方块：整格独立配色（淡蓝），与选区的黄色明显区分。
+   物流期的第一天就是发货日（status=start/start-only），它也要是蓝的——
+   所以这里只挂 .is-ship，不再限定 .cal-cell--mid，靠双类选择器压过上面的黄色。 */
+.cal-cell.is-ship {
   background: #e7f1ff;
 }
-.cal-cell.is-ship.cal-cell--mid .cal-day {
+.cal-cell.is-ship .cal-day {
   color: #1f63d6;
 }
-.cal-cell.is-ship.cal-cell--mid .cal-price {
+.cal-cell.is-ship .cal-price {
   color: #2b7cff;
   font-weight: 700;
 }
@@ -785,6 +792,20 @@
 }
 .cal-cell.end-disabled .cal-day { color: #b9c0cd; }
 .cal-cell.end-disabled:not(.is-ship) .cal-price { color: #c8ced8; }
+
+/* 起租日（物流期后的第一天、开始计费那天）：和归还日一样的深黄，
+   让「蓝色物流段 → 深黄起租 → 浅黄用机 → 深黄归还」一眼分得开。
+   放在 end-disabled 之后，是为了在「只选了发货日、归还日待选」的状态下，
+   这一格仍然是深黄的起点，而不是被条纹态压成灰色。 */
+.cal-cell.is-rent-start {
+  background: #ffd944;
+}
+.cal-cell.is-rent-start .cal-day {
+  color: #1a1f2e; font-weight: 800;
+}
+.cal-cell.is-rent-start .cal-price {
+  color: #5d4500; font-weight: 600;
+}
 
 /* "最早可还"角标 + 高亮 */
 .cal-tag--earliest {

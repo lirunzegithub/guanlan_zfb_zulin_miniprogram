@@ -39,7 +39,7 @@
     </view>
 
     <view class="mc-goods">
-      <image a:if="{{o.product_cover}}" class="mc-thumb" src="{{o.product_cover}}" mode="aspectFill" />
+      <view a:if="{{o.product_cover}}" class="mc-thumb"><smart-image style="display:block;width:100%;height:100%" src="{{o.product_cover}}" mode="aspectFill" /></view>
       <view a:else class="mc-thumb mc-thumb-ph">{{o._shortName}}</view>
       <view class="mc-gbody">
         <view class="mc-grow1">
@@ -119,24 +119,17 @@
     </view>
   </view>
 
-  <!-- 实时租金累计 -->
+  <!-- 已付租金 -->
   <view a:if="{{rent.show}}" class="card rent-card">
     <view class="rent-head">
-      <text class="rent-title">租金实时累计</text>
-      <text a:if="{{rent.notStarted}}" class="rent-state pending">未开始计费</text>
-      <text a:elif="{{rent.inShipPeriod}}" class="rent-state ship">物流免租期</text>
-      <text a:elif="{{rent.overhold}}" class="rent-state warn">已超归还日</text>
-      <text a:else class="rent-state on">计费中</text>
+      <text class="rent-title">已付租金</text>
+      <text class="rent-state on">已支付</text>
     </view>
     <view class="rent-amount-line">
       <text class="rent-currency">¥</text>
-      <text class="rent-num">{{rent.accumulated}}</text>
+      <text class="rent-num">{{rent.paidAmount}}</text>
     </view>
-    <view class="rent-sub">
-      <block a:if="{{rent.inShipPeriod}}">物流期 {{rent.shipUsed}} / {{rent.shipDays}} 天 · 暂未计费</block>
-      <block a:elif="{{rent.notStarted}}">起租前 · 暂未计费</block>
-      <block a:else>已计费 {{rent.currentDays}} 天（不含 {{rent.shipDays}} 天物流免租期）</block>
-    </view>
+    <view class="rent-sub">该金额已在下单授权成功后完成支付</view>
 
     <view class="rent-info">
       <view class="info-row">
@@ -151,31 +144,10 @@
         <text class="info-k">预计归还日</text>
         <text class="info-v">{{rent.endDateText}}</text>
       </view>
-      <view class="info-row breach-row">
-        <text class="info-k">强制违约日</text>
-        <text class="info-v breach-v">{{rent.breachDateText}}</text>
-      </view>
-    </view>
-
-    <view class="tier-block">
-      <view class="tier-head">
-        计费标准
-        <text class="tier-head-sub">下单时锁定，后续改价不影响本单</text>
-      </view>
-      <view class="tier-line tier-ship">
-        <text class="tier-range">物流期 前 {{rent.shipDays}} 天</text>
-        <text class="tier-price tier-price-free">免租</text>
-      </view>
-      <block a:for="{{rent.tierLines}}" a:key="*this">
-        <view class="tier-line">
-          <text class="tier-range">{{item.range}}</text>
-          <text class="tier-price">¥{{item.price}} / 天</text>
-        </view>
-      </block>
     </view>
 
     <view a:if="{{rent.overhold}}" class="rent-warn-banner">
-      ⚠️ 已超过预计归还日；当前仍按计费标准累计，强制违约日 {{rent.breachDateText}} 后将触发自动扣款
+      ⚠️ 已超过预计归还日，请尽快安排寄回
     </view>
   </view>
 
@@ -238,6 +210,39 @@
     <!-- 拉不到轨迹时只提示一句，不影响上面的运单号展示 -->
     <view a:if="{{logi.loaded && logi.supported && !logi.routes.length}}" class="lg-empty">
       {{logi.error || '暂无物流轨迹，快递员揽收后即可查看'}}
+    </view>
+  </view>
+
+  <!-- 续租直接在订单详情内完成，逾期订单不允许续租 -->
+  <view a:if="{{renewal.show}}" class="card renewal-card">
+    <view class="rn-head">
+      <view>
+        <view class="renewal-entry-title">续租</view>
+        <view class="renewal-entry-sub">当前归还日 {{o.end_date}}，按原订单计价标准结算</view>
+      </view>
+    </view>
+    <view class="rn-options">
+      <view a:for="{{renewal.options}}" a:key="days"
+            class="rn-opt {{!renewal.custom && renewal.selected === item.days ? 'on' : ''}} {{item.disabled ? 'disabled' : ''}}"
+            data-days="{{item.days}}" onTap="onRenewalPreset">{{item.days}}天</view>
+      <picker mode="date" value="{{renewal.customDate}}" start="{{renewal.minDate}}"
+              end="{{renewal.maxDate}}" disabled="{{renewal.maxExtendDays < 1}}" onChange="onRenewalDateChange">
+        <view class="rn-opt {{renewal.custom ? 'on' : ''}}" onTap="onRenewalCustomTap">自定义</view>
+      </picker>
+    </view>
+    <view a:if="{{renewal.unavailableMsg}}" class="rn-limit-warn">{{renewal.unavailableMsg}}</view>
+    <view a:else class="rn-limit-tip">单次最多 60 天，最晚归还日 {{renewal.maxDate}}（押金授权到期前 10 天）</view>
+    <view a:if="{{renewal.custom}}" class="rn-custom-date">新归还日：{{renewal.customDate}}</view>
+    <view class="rn-quote">
+      <view>
+        <view class="rn-price-label">续租价格</view>
+        <view a:if="{{renewal.quoting}}" class="rn-loading">计算中…</view>
+        <view a:elif="{{renewal.quote}}" class="rn-price">¥{{renewal.quote.quoted_amount_text}}</view>
+        <view a:else class="rn-loading">请选择续租时长</view>
+      </view>
+      <view class="rn-pay {{(!renewal.quote || renewal.paying) ? 'disabled' : ''}}" onTap="onRenewalPay">
+        {{renewal.paying ? '处理中…' : '确认续租'}}
+      </view>
     </view>
   </view>
 
@@ -315,7 +320,10 @@
   <!-- 押金信息 -->
   <view class="card">
     <view class="card-h">
-      <text class="card-title">押金信息</text>
+      <view class="deposit-title-wrap">
+        <text class="card-title">押金信息</text>
+        <view class="deposit-help" onTap="onDepositHelp">!</view>
+      </view>
       <image class="zmxy-badge" src="/images/zmxy-badge.png" mode="aspectFit" />
     </view>
     <view class="info-row">
@@ -325,14 +333,6 @@
     <view class="info-row">
       <text class="info-k">冻结金额</text>
       <text class="info-v">¥{{o._freezeText}}</text>
-    </view>
-    <!-- 当冻结模式 = 押金+租金时，展开显示分项，避免用户误以为"押金多收了" -->
-    <view a:if="{{o._freezeIncludesRent}}" class="info-row sub-row">
-      <text class="info-k sub-k">┗ 押金 ¥{{o.deposit_freeze}} + 租金 ¥{{o._amountText}}</text>
-    </view>
-    <view class="deposit-tip">
-      <block a:if="{{o._freezeIncludesRent}}">芝麻信用免押金，无需实付，押金 + 总租金以信用额度形式冻结作为担保；归还核验通过后自动解冻剩余、按实际用量扣租金。</block>
-      <block a:else>芝麻信用免押金，无需实付，仅冻结押金作为信用担保，归还后自动解冻；租金按周期单独扣款。</block>
     </view>
   </view>
 
@@ -480,7 +480,7 @@
   </view>
 
   <!-- 给底部固定 Bar 留位 -->
-  <view style="height: {{(o.status === 'send' || o.status === 'audit') ? 200 : 40}}rpx;"></view>
+  <view style="height: {{(o.status === 'send' || o.status === 'audit' || o.status === 'pay') ? 200 : 40}}rpx;"></view>
 
   <!-- 底部固定 Bar：次要动作用描边胶囊，主动作用实心蓝，与全站按钮语言一致 -->
   <view a:if="{{o.status === 'send'}}" class="bottom-bar safe-bottom">
@@ -493,6 +493,14 @@
     <view class="bb-ghost" onTap="onCancel">取消订单</view>
     <view class="bb-primary {{freezing ? 'disabled' : ''}}" onTap="onCreditFreeze">
       {{freezing ? '拉起支付…' : '去免押'}}
+    </view>
+  </view>
+  <view a:if="{{o.status === 'pay'}}" class="bottom-bar safe-bottom">
+    <view class="bb-ghost" onTap="onCallService">联系客服</view>
+    <view class="bb-ghost" onTap="onCancel">取消订单</view>
+    <view class="bb-primary {{payingRent ? 'disabled' : ''}}" onTap="onRentPay">
+      <block a:if="{{payingRent}}">拉起支付…</block>
+      <block a:else>支付租金 ¥{{o._amountText}}</block>
     </view>
   </view>
 </view>

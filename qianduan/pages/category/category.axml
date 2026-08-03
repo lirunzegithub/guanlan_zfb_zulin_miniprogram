@@ -42,7 +42,8 @@
       <view a:else class="grid">
         <block a:for="{{products}}" a:key="id">
           <view class="goods" onTap="onGoods" data-id="{{item.id}}">
-            <view class="goods-img" style="background:{{item.bg}}"></view>
+            <view a:if="{{item.cover_url}}" class="goods-img"><smart-image style="display:block;width:100%;height:100%" src="{{item.cover_url}}" mode="aspectFill" /></view>
+            <view a:else class="goods-img"></view>
             <view class="goods-name">{{item.name}}</view>
             <view class="goods-meta">
               <text a:if="{{item.min_price}}" class="price">¥{{item.min_price}} 起</text>

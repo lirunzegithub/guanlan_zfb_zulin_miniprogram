@@ -989,7 +989,12 @@ Page({
       const isEarliestEnd = !!startD && !endD
         && status === 'normal'
         && d.getTime() === minEndTs;
-      cells.push({ day: dayNum, ymd, status, priceText, isShip, endDisabled, isEarliestEnd });
+      // 「起租」= 开始计费那天 = 起始日 + 物流期，不是用户点的那天（前 ship 天免租，
+      // 只跑物流）。ship=0 时它就落在起始日本身，标签优先级在 axml 里处理。
+      const isRentStart = !!startD
+        && status !== 'disabled'
+        && d.getTime() === startD.getTime() + ship * 86400000;
+      cells.push({ day: dayNum, ymd, status, priceText, isShip, endDisabled, isEarliestEnd, isRentStart });
     }
     const weeks = [];
     for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
@@ -1033,7 +1038,8 @@ Page({
   _tiersOf(p) { return pricing.tiersOf(p); },
   _unitPriceForRentDay(rentDay, tiers) { return pricing.unitPriceForRentDay(rentDay, tiers); },
 
-  /** 点击日历格子：第一次选起租日；第二次若晚于起租 → 归还日，否则重置为起租 */
+  /** 点击日历格子：第一次选发货日（起始日）；第二次若晚于它 → 归还日，否则重置为发货日。
+   *  注意日历上的「起租」标签落在 发货日 + 物流期 那天，选的始终是发货日。 */
   onCalDayTap(e) {
     // 运营关闭了"手动选择"时，日历仅展示，不响应点选
     if (!this.data.allowManualPick) {
@@ -1051,7 +1057,7 @@ Page({
       // 第一次或已完成一次选择 → 重新开始
       start = ymd; end = '';
     } else {
-      // 已选起租，未选归还
+      // 已选发货日，未选归还
       const sd = this._parseDate(start).getTime();
       const cd = this._parseDate(ymd).getTime();
       if (cd <= sd) {
@@ -1129,10 +1135,10 @@ Page({
     if (!r.startDate || !r.endDate) {
       this._showInlineTip(
         'info',
-        r.startDate ? '还差归还日没选' : '请先选择起租日',
+        r.startDate ? '还差归还日没选' : '请先选择发货日',
         r.startDate
-          ? `已选起租 ${r.startDateShort}，请在日历上点选一个归还日`
-          : '在下方日历上点选起租日，再点选归还日',
+          ? `已选发货 ${r.startDateShort}，请在日历上点选一个归还日`
+          : '在下方日历上点选发货日，再点选归还日',
       );
       return;
     }

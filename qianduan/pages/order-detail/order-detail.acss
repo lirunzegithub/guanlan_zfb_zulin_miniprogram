@@ -355,19 +355,28 @@
   flex-shrink: 0;
 }
 .deposit-amt { color: #f0560b; font-weight: 800; }
-.sub-row { padding-top: 4rpx; padding-bottom: 8rpx; }
-.sub-k   { font-size: 22rpx; color: #6b7280; }
-.deposit-tip {
-  margin-top: 16rpx;
-  padding: 14rpx 16rpx;
-  background: var(--primary-soft, #eaf2ff);
-  border-radius: 10rpx;
-  font-size: 22rpx;
-  color: #4a5060;
-  line-height: 1.55;
+.deposit-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+.deposit-help {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28rpx;
+  height: 28rpx;
+  border: 1rpx solid #c9ced6;
+  border-radius: 50%;
+  background: #f5f6f8;
+  color: #8d95a1;
+  font-size: 18rpx;
+  font-weight: 600;
+  line-height: 1;
+  box-sizing: border-box;
 }
 
-/* 实时租金累计卡 */
+/* 已付租金卡 */
 .rent-card {
   padding: 28rpx;
   background: linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);
@@ -410,37 +419,7 @@
 }
 .rent-info .info-row { padding: 14rpx 0; }
 .rent-info .info-row:last-child { border-bottom: none; }
-.breach-v { color: #d93026; font-weight: 700; }
-
-.tier-block {
-  margin-top: 18rpx;
-  padding: 18rpx 20rpx;
-  background: rgba(43,124,255,0.04);
-  border-radius: 14rpx;
-}
-.tier-head {
-  display: flex; align-items: baseline; gap: 12rpx;
-  font-size: 24rpx; font-weight: 700; color: #1a1f2e;
-  margin-bottom: 10rpx;
-}
-.tier-head-sub { font-size: 20rpx; font-weight: 400; color: #9aa4b2; }
-.tier-line {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 8rpx 0;
-  font-size: 24rpx;
-}
-.tier-range { color: #4a5060; }
-.tier-ship .tier-range { color: #6b7280; }
-.tier-price-free {
-  color: #18b07b !important;
-  background: rgba(24,176,123,0.10);
-  padding: 2rpx 12rpx;
-  border-radius: 6rpx;
-  font-size: 22rpx;
-  font-weight: 700;
-}
 .hl-primary { color: var(--primary, #2b7cff); font-weight: 700; }
-.tier-price { color: #1a1f2e; font-weight: 700; font-feature-settings: 'tnum'; }
 
 .rent-warn-banner {
   margin-top: 18rpx;
@@ -960,3 +939,33 @@
   color: #b6bcca;
   text-align: center;
 }
+.renewal-card { overflow:hidden; }
+.rn-head { display:flex; align-items:center; justify-content:space-between; }
+.renewal-entry-title { font-size:32rpx; font-weight:700; color:#17233d; }
+.renewal-entry-sub { margin-top:10rpx; font-size:24rpx; color:#8792a8; }
+.rn-options { display:flex; gap:12rpx; margin-top:26rpx; }
+.rn-options picker { flex:1; }
+.rn-opt {
+  height:66rpx; padding:0 12rpx; border:2rpx solid #e4e9f2; border-radius:14rpx;
+  display:flex; align-items:center; justify-content:center; box-sizing:border-box;
+  font-size:25rpx; color:#536079; background:#f8faff; white-space:nowrap;
+}
+.rn-options > .rn-opt { flex:1; }
+.rn-opt.on { color:#1677ff; border-color:#1677ff; background:#edf5ff; font-weight:700; }
+.rn-opt.disabled { opacity:.35; }
+.rn-limit-tip { margin-top:16rpx; font-size:22rpx; line-height:1.5; color:#8792a8; }
+.rn-limit-warn { margin-top:16rpx; padding:14rpx 18rpx; border-radius:12rpx; font-size:23rpx; line-height:1.5; color:#c0260b; background:#fff4ee; }
+.rn-custom-date { margin-top:18rpx; font-size:24rpx; color:#536079; }
+.rn-quote {
+  margin-top:24rpx; padding:22rpx 0 0; border-top:1rpx solid #edf0f5;
+  display:flex; align-items:center; justify-content:space-between; gap:24rpx;
+}
+.rn-price-label { font-size:23rpx; color:#8792a8; }
+.rn-price { margin-top:4rpx; font-size:42rpx; line-height:1.1; font-weight:800; color:#f0560b; }
+.rn-loading { margin-top:8rpx; font-size:25rpx; color:#8792a8; }
+.rn-pay {
+  min-width:190rpx; height:72rpx; padding:0 24rpx; border-radius:36rpx;
+  display:flex; align-items:center; justify-content:center;
+  background:#1677ff; color:#fff; font-size:27rpx; font-weight:700;
+}
+.rn-pay.disabled { opacity:.45; }

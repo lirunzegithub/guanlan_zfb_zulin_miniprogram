@@ -24,10 +24,13 @@ from app.response import ok, fail
 from app.storage.repos import (
     banner_repo, category_repo, product_repo, sku_repo, user_repo, staff_repo,
     comment_repo, coupon_repo, user_coupon_repo,
-    order_repo, address_repo, trade_repo, faq_repo, order_note_repo,
+    order_repo, address_repo, trade_repo, renewal_repo, faq_repo, order_note_repo,
     ensure_default_sku,
 )
 from app.storage.order_ops import update_order
+# 「押金已冻结但租金未结清」的判据与定时任务共用一份，避免后台显示和自动重试口径不一致。
+# scheduler 模块级只依赖标准库（对 routes 的 import 全是函数内延迟导入），不构成循环依赖。
+from app.scheduler import rent_capture_pending
 from app.notify_log import list_recent as list_notify_logs, clear as clear_notify_logs
 from app import auth_token
 from app import logistics
@@ -155,16 +158,16 @@ def stats():
     )
 
     order_status_count: dict[str, int] = {}
-    revenue_paid = 0.0  # 已收租金（订单进入 send 之后视为成交；取消单不计）
+    revenue_paid = 0.0  # 已收且未退的首期租金
     for o in orders:
         st = o.get("status") or ""
         order_status_count[st] = order_status_count.get(st, 0) + 1
-        if st in ("send", "recv", "using", "return", "overdue", "done"):
+        if o.get("rent_paid_at") and not o.get("rent_refunded_at"):
             revenue_paid += float(o.get("amount") or 0)
 
     in_progress = sum(
         order_status_count.get(s, 0)
-        for s in ("audit", "send", "recv", "using", "return", "overdue")
+        for s in ("pay", "audit", "send", "recv", "using", "return", "overdue")
     )
 
     return ok({
@@ -180,7 +183,9 @@ def stats():
         "order_status_count": order_status_count,
         "revenue_paid": round(revenue_paid, 2),
         "recent_products": [
-            {"id": p["id"], "name": p["name"], "min_price": p.get("min_price"), "sales": p.get("sales")}
+            {"id": p["id"], "name": p["name"], "min_price": p.get("min_price"),
+             "sales": sum(int(s.get("sales") or 0) for s in skus if s.get("product_id") == p["id"])
+                      if p["id"] in covered else int(p.get("sales") or 0)}
             for p in sorted(products, key=lambda x: x.get("updated_at", 0), reverse=True)[:5]
         ],
     })
@@ -855,6 +860,7 @@ def coupons_grants(cid):
 #   audit / send / recv → cancelled（取消并退押）
 # 注：芝麻免押本身已含活体校验，二次人脸冗余，原 awaiting_face 环节已废弃。
 _ADMIN_ORDER_TRANSITIONS: dict[str, set[str]] = {
+    "pay":               {"cancelled"},                          # 未付租金可直接取消
     "audit":             {"cancelled"},                          # 取消未付押的订单
     "send":              {"recv", "pending_cancel", "cancelled"},# 发货 / 用户申请取消 / 强制取消
     "pending_cancel":    {"send", "cancelled"},                  # 商家驳回回 send / 同意取消
@@ -868,6 +874,7 @@ _ADMIN_ORDER_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _ORDER_STATUS_LABEL = {
+    "pay":               "待付租金",
     "audit":             "待免押",
     "send":              "待发货",
     "pending_cancel":    "取消审核中",
@@ -978,6 +985,17 @@ def _order_view(o: dict, *, user_map: dict | None = None,
         time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(upd)) if upd else ""
     )
     out["status_label"] = _ORDER_STATUS_LABEL.get(o.get("status") or "", o.get("status") or "")
+    # audit 细分：押金其实已经冻结成功了，只是租金没从授权池里收上来。
+    # 一律显示"待免押"会让运营以为用户没付款——实际钱已经冻在支付宝，两回事。
+    # 判据与 scheduler.tick_retry_rent_capture 共用，避免两处口径漂移。
+    out["rent_capture_pending"] = rent_capture_pending(o)
+    out["rent_capture_error"] = (
+        o.get("rent_capture_last_error") or o.get("rent_payment_error") or ""
+    )
+    if out["rent_capture_pending"]:
+        out["status_label"] = (
+            "授权成功·租金结算失败" if out["rent_capture_error"] else "授权成功·租金结算中"
+        )
     # pending_cancel 细分：商家已点同意并下发解冻请求 → "解冻中"，未审核 → 保留 "取消审核中"
     if o.get("status") == "pending_cancel" and o.get("unfreeze_dispatched_at"):
         out["status_label"] = "解冻中"
@@ -1240,6 +1258,31 @@ def admin_order_logistics(oid):
         return fail(1, f"物流查询异常：{e}")
 
 
+@bp.post("/orders/<oid>/rent/retry")
+def admin_retry_rent_capture(oid):
+    """手动重试「综合授权成功后自动收租金」。收上来即 audit → send。
+
+    与定时任务 tick_retry_rent_capture 共用同一入口 transition_freeze_done：
+    out_trade_no 固定为 {oid}R、先 query 后 pay，重复点击不会重复扣款。
+    失败也返回 200，原因走 msg（与 admin_resync_order 一致）。
+    """
+    o = order_repo.get(oid)
+    if not o:
+        return fail(404, "订单不存在")
+    if not rent_capture_pending(o):
+        return fail(1, "该订单不处于「已冻结押金但租金未结清」状态，无需重试")
+    from app.routes.orders import transition_freeze_done
+    after = transition_freeze_done(oid) or order_repo.get(oid)
+    if (after or {}).get("status") == "send":
+        return ok(_order_view(after), "租金已结清，订单已进入待发货")
+    err = (
+        (after or {}).get("rent_capture_last_error")
+        or (after or {}).get("rent_payment_error")
+        or "支付宝未确认到账"
+    )
+    return ok(_order_view(after), f"仍未结清：{err[:160]}")
+
+
 @bp.post("/orders/<oid>/sync")
 def admin_resync_order(oid):
     """手动重试支付宝商家订单同步。失败也返回 200，错误信息走 msg。"""
@@ -1337,7 +1380,7 @@ def admin_orders_stats():
     for o in items:
         s = o.get("status") or ""
         by_status[s] = by_status.get(s, 0) + 1
-        if s not in ("audit", "cancelled"):
+        if o.get("rent_paid_at") and not o.get("rent_refunded_at"):
             revenue += float(o.get("amount") or 0)
     return ok({
         "total":     len(items),
@@ -1402,6 +1445,15 @@ def admin_create_order_note(oid):
     return ok(_note_view(rec), "备注已添加")
 
 
+@bp.get("/orders/<oid>/renewals")
+def admin_order_renewals(oid):
+    if not order_repo.get(oid):
+        return fail(404, "订单不存在")
+    items = renewal_repo.list(order_id=oid)
+    items.sort(key=lambda x: -int(x.get("created_at") or 0))
+    return ok({"list": items, "total": len(items)})
+
+
 @bp.put("/orders/<oid>")
 def admin_update_order(oid):
     """订单更新：当前仅允许改 status / remark。状态流转走白名单，
@@ -1459,6 +1511,16 @@ def admin_update_order(oid):
     # status 变更会被 update_order 拦截器自动同步到支付宝订单中心；
     # 失败不回滚业务变更，sync_err 字段会被写好，前端可走"重试同步"。
     update_order(oid, patch, sync_reason="admin_status_update")
+    # 人工标记逾期后不再允许续租；关闭未支付服务单。
+    # 如收银台已被拉起且之后才付款，通知会把该单记为 PAYMENT_EXCEPTION，
+    # 绝不会把 overdue 自动改回 using。
+    if patch.get("status") == "overdue":
+        waiting = renewal_repo.find(order_id=oid, status="WAITING_PAY")
+        if waiting:
+            renewal_repo.update(waiting["id"], {
+                "status": "CANCELLED", "cancelled_at": int(time.time()),
+                "failure_reason": "订单已被后台标记逾期",
+            })
     updated = order_repo.get(oid)  # 拿回带最新 sync_* 字段的视图
     sync_msg = ""
     if "status" in patch and not updated.get("sync_ok"):
@@ -1563,6 +1625,25 @@ def admin_force_cancel(oid):
         return fail(1, "订单已在取消/解冻处理中，等待支付宝异步通知")
 
     now = int(time.time())
+    # 待付租金订单还没进入押金授权，不能走 auth_no 查询；
+    # 但如果拉起过收银台，必须先对账防止误关已付款订单。
+    if status == "pay":
+        rent_otn = (o.get("rent_out_trade_no") or "").strip()
+        if rent_otn:
+            try:
+                q = get_client().trade_query(out_trade_no=rent_otn)
+                if (q.get("trade_status") or "").upper() in ("TRADE_SUCCESS", "TRADE_FINISHED"):
+                    from app.routes.orders import complete_initial_rent
+                    complete_initial_rent(rent_otn, trade_no=q.get("trade_no") or "", raw=q)
+                    return fail(1, "租金已支付，已自动推进为待免押；不能按未付款订单取消")
+            except Exception as e:
+                return fail(1, f"向支付宝核对租金失败，已中止取消：{e}")
+        updated = update_order(oid, {
+            "status": "cancelled", "cancelled_at": now, "cancelled_by": "admin_force",
+        }, sync_reason="admin_cancel_before_rent_paid")
+        _refund_coupon_if_any(o)
+        return ok(_order_view(updated), "未支付租金，订单已取消")
+
     # 本地没有授权号时先向支付宝核实（通知不可达/丢失的单，空 ≠ 未冻结；
     # 直接按"未冻结"关单会把押金留在支付宝冻结池直到预授权到期）
     try:
@@ -1574,6 +1655,10 @@ def admin_force_cancel(oid):
 
     # 支付宝端确认未冻结、或无可解冻额：本地直接关单（alipay 不接受 0 元解冻）
     if not auth_no or amount <= 0:
+        from app.routes.orders import refund_initial_rent
+        refunded, refund_err = refund_initial_rent(o, reason="商家取消租赁订单")
+        if not refunded:
+            return fail(1, f"租金原路退款失败，已中止取消：{refund_err}")
         updated = update_order(oid, {
             "status": "cancelled",
             "cancelled_at": now,
@@ -1793,7 +1878,7 @@ def admin_delete_order(oid):
 
 # ---------- 用户 ----------
 # 进行中订单状态：与 stats 接口口径一致（done / cancelled 为终态）
-_ORDER_IN_PROGRESS = frozenset({"audit", "send", "recv", "using", "return", "overdue"})
+_ORDER_IN_PROGRESS = frozenset({"pay", "audit", "send", "recv", "using", "return", "overdue"})
 
 
 @bp.get("/users")

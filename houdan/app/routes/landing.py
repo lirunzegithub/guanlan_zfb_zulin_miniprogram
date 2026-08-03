@@ -340,4 +340,10 @@ def landing_page():
 
 @bp.get("/asset/<path:filename>")
 def asset(filename):
-    return send_from_directory(ASSETS_DIR, filename)
+    response = send_from_directory(ASSETS_DIR, filename, conditional=True, max_age=31536000)
+    # 上传文件名使用 UUID，内容变化会产生新 URL，因此可以安全地长期缓存。
+    # 支付宝退出小程序后再次进入时会直接复用磁盘缓存，不必重新下载图片。
+    response.cache_control.public = True
+    response.cache_control.max_age = 31536000
+    response.cache_control.immutable = True
+    return response

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # 内部 status → alipay 3C_RENT merchant_order_status
 # 完整状态枚举详见 docs/ORDER_CENTER_SYNC.md §2.1
 _STATUS_MAP: dict[str, str | None] = {
+    "pay":               "PENDING",         # 已创建，待用户支付租金
     "audit":             "DEPOSIT_WAIVER",  # 待免押
     "send":              "TO_SEND_GOODS",   # 待发货
     # pending_cancel 是内部审核中间态：支付宝那边订单实际还在 TO_SEND_GOODS。
@@ -91,6 +92,8 @@ def _build_business_info(order: dict) -> dict:
         "first_rent":     f"{amount:.2f}",
         "payment_amount": f"{amount:.2f}",
     }
+    if order.get("renewed_at"):
+        info["real_date"] = time.strftime("%Y-%m-%d", time.localtime(int(order["renewed_at"])))
     if order.get("shipped_at"):
         info["delivery_time"] = _fmt_time(order["shipped_at"])
     # 收货时间：SERVICE_MSG（订单消息）场景必填——之前没拼这个字段，
@@ -133,7 +136,7 @@ def _item_info(order: dict) -> tuple[str, str]:
     return name, material_id
 
 
-def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
+def sync_order(oid: str, *, reason: str = "", status_override: str = "") -> tuple[bool, str]:
     """把订单当前状态同步到支付宝订单中心。
     成功：(True, "")；失败：(False, err_msg)。一律落 notify_log + 写回订单 sync_*。
     """
@@ -154,7 +157,7 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
             note=f"skipped: {internal} 为内部中间态 ({reason or 'manual'})",
         )
         return True, ""
-    alipay_status = _STATUS_MAP.get(internal)
+    alipay_status = status_override or _STATUS_MAP.get(internal)
     if not alipay_status:
         return False, f"无法映射内部状态 '{internal}'"
 

@@ -1,0 +1,18 @@
+<view class="smart-image" style="width:100%;height:100%;">
+  <view a:if="{{!loaded && !failed}}" class="smart-image-skeleton">
+    <view class="smart-image-shimmer"></view>
+  </view>
+  <image
+    a:if="{{renderSrc}}"
+    class="smart-image-content {{loaded ? 'is-loaded' : ''}}"
+    src="{{renderSrc}}"
+    mode="{{mode}}"
+    lazy-load="{{lazyLoad}}"
+    onLoad="handleLoad"
+    onError="handleError"
+  />
+  <view a:if="{{failed}}" class="smart-image-error" onTap="retry">
+    <text class="smart-image-error-icon">↻</text>
+    <text>图片加载失败，点击重试</text>
+  </view>
+</view>

@@ -118,22 +118,11 @@
       </div>
 
       <div class="form-field">
-        <label class="form-label">押金冻结模式</label>
-        <div class="seg-row">
-          <label class="seg">
-            <input type="radio" :value="true" v-model="form.freeze_includes_rent" />
-            <span>押金 + 租金（合并冻结）</span>
-          </label>
-          <label class="seg">
-            <input type="radio" :value="false" v-model="form.freeze_includes_rent" />
-            <span>仅押金</span>
-          </label>
-        </div>
+        <label class="form-label">收款与免押模式</label>
+        <div><b>押金 + 租金一次综合授权</b></div>
         <div class="form-hint">
-          决定下单时调支付宝 freeze 的冻结金额组成：<br>
-          ・<b>押金 + 租金</b>：合并冻结一次到位，归还核验时可走"扣后解冻剩余"扣实际租金<br>
-          ・<b>仅押金</b>：只冻押金作担保，租金到期再单独扣<br>
-          注：仅影响<b>新下单</b>；已下单订单按下单时快照（freeze_amount 字段）执行。
+          用户只进行一次支付宝验证；授权成功后，系统立即把租金转为实际支付，剩余押金额度继续担保。<br>
+          历史订单仍按它们下单时的 freeze_amount 快照执行，不会被改写。
         </div>
         <a class="link-out" href="https://opendocs.alipay.com/open/064jhe" target="_blank" rel="noopener noreferrer">
           支付宝官方文档：线上资金授权冻结接口（freeze） ↗

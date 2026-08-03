@@ -118,10 +118,16 @@
             <span v-else class="muted">—</span>
           </td>
           <td>
-            <span :class="['tag', statusCls(o.status)]">{{ o.status_label }}</span>
+            <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error">{{ o.status_label }}</span>
           </td>
           <td>
             <button class="btn-link" @click="openDetail(o)">详情</button>
+            <button
+              v-if="o.rent_capture_pending"
+              class="btn-link primary"
+              :disabled="retryingRent === o.id"
+              @click="retryRentCapture(o)"
+            >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
             <button
               v-if="o.status === 'send'"
               class="btn-link primary"
@@ -163,7 +169,7 @@
       <div v-for="o in list" :key="'m-' + o.id" class="order-card">
         <div class="oc-head">
           <span class="oid">{{ o.id }}</span>
-          <span :class="['tag', statusCls(o.status)]">{{ o.status_label }}</span>
+          <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error">{{ o.status_label }}</span>
         </div>
 
         <div class="prod oc-prod">
@@ -238,6 +244,12 @@
         <div class="oc-actions">
           <button class="btn-link" @click="openDetail(o)">详情</button>
           <button
+            v-if="o.rent_capture_pending"
+            class="btn-link primary"
+            :disabled="retryingRent === o.id"
+            @click="retryRentCapture(o)"
+          >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
+          <button
             v-if="o.status === 'send'"
             class="btn-link primary"
             @click="openShip(o)"
@@ -285,7 +297,23 @@
         <div class="detail-grid">
           <div class="field">
             <div class="label">订单状态</div>
-            <span :class="['tag', statusCls(detail.status)]">{{ detail.status_label }}</span>
+            <span :class="['tag', orderStatusCls(detail)]">{{ detail.status_label }}</span>
+            <!-- audit 里最容易被误读的一种：押金其实冻上了，卡的是租金转支付。
+                 把支付宝的原话摊出来，再给一个幂等的重试入口，免得运营只能"取消订单"。 -->
+            <div v-if="detail.rent_capture_pending" class="rent-stuck">
+              <div>押金已冻结成功，首期租金 ¥{{ fmt(detail.amount) }} 尚未从授权额度中收取，订单因此停在待免押、不会发货。</div>
+              <div v-if="detail.rent_capture_error" class="rent-stuck-err">
+                支付宝返回：{{ detail.rent_capture_error }}
+              </div>
+              <div class="muted small">
+                已自动重试 {{ detail.rent_capture_attempts || 0 }} 次（系统每 15 分钟自动重试一次，上限 24 次）
+              </div>
+              <button
+                class="btn btn-sm"
+                :disabled="retryingRent === detail.id"
+                @click="retryRentCapture(detail)"
+              >{{ retryingRent === detail.id ? '结算中…' : '重试租金结算' }}</button>
+            </div>
           </div>
           <div class="field">
             <div class="label">下单时间</div>
@@ -476,6 +504,23 @@
 
         <div class="divider"></div>
 
+        <div class="field">
+          <div class="label">续租记录</div>
+          <div v-if="renewalsLoading" class="muted">加载中…</div>
+          <div v-else-if="!renewals.length" class="muted">暂无续租记录</div>
+          <table v-else class="table" style="margin-top:8px">
+            <thead><tr><th>原归还日</th><th>新归还日</th><th>天数</th><th>金额</th><th>状态</th><th>支付宝交易号</th></tr></thead>
+            <tbody><tr v-for="r in renewals" :key="r.id">
+              <td>{{ r.original_end_date }}</td><td>{{ r.new_end_date }}</td>
+              <td>{{ r.renew_days }} 天</td><td>¥{{ fmt(r.quoted_amount) }}</td>
+              <td><span :class="['tag', r.status === 'COMPLETED' ? 'tag-green' : (r.status === 'PAYMENT_EXCEPTION' ? 'tag-red' : 'tag-orange')]">{{ r.status }}</span></td>
+              <td class="mono small">{{ r.trade_no || '-' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+
+        <div class="divider"></div>
+
         <!-- 工作人员备注（独立审计日志，仅后台可见） -->
         <div class="field">
           <div class="label" style="display:flex;align-items:center;justify-content:space-between">
@@ -647,11 +692,16 @@
             </div>
             <div class="cf-row">
               <div class="muted small">
-                <template v-if="detail.freeze_includes_rent !== false">
-                  本订单冻结金额：押金 ¥{{ fmt(detail.deposit_freeze) }} + 租金 ¥{{ fmt(detail.amount) }} = ¥{{ fmt(detail.freeze_amount || (Number(detail.deposit_freeze || 0) + Number(detail.amount || 0))) }}（押金+租金模式）
+                <template v-if="detail.freeze_includes_rent !== false && Number(detail.amount || 0) <= 0">
+                  本订单为 0 元租金（租押分离），授权金额仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}，无租金需转支付。
+                </template>
+                <template v-else-if="detail.freeze_includes_rent !== false">
+                  本订单初始综合授权：押金 ¥{{ fmt(detail.deposit_freeze) }} + 租金 ¥{{ fmt(detail.amount) }} = ¥{{ fmt(detail.freeze_amount || (Number(detail.deposit_freeze || 0) + Number(detail.amount || 0))) }}。
+                  <span v-if="detail.rent_paid_at">租金已自动转支付，当前仅余押金担保。</span>
+                  <span v-else>租金尚未确认转支付，严禁发货。</span>
                 </template>
                 <template v-else>
-                  本订单冻结金额：仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}（仅押金模式；租金独立扣款）
+                  本订单授权金额：仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}（租金已下单实付）
                 </template>
                 <br>
                 授权号：<code class="mono small">{{ detail.alipay_auth_no || '（订单尚未完成免押授权）' }}</code>
@@ -933,6 +983,7 @@
 const { ref, reactive, computed, inject, onMounted, onUnmounted, nextTick } = Vue;
 
 const STATUS_LABEL = {
+  pay:               '待付租金',
   audit:             '待免押',
   send:              '待发货',
   pending_cancel:    '取消审核中',
@@ -946,6 +997,7 @@ const STATUS_LABEL = {
 };
 
 const TAGS_BY_STATUS = {
+  pay:               'tag-red',
   audit:             'tag',
   send:              'tag-orange',
   pending_cancel:    'tag-red',
@@ -961,6 +1013,7 @@ const TAGS_BY_STATUS = {
 // 列表行的快捷操作：按当前状态展示一两个最常用的下一步动作
 // pending_cancel / return_inspecting 走专用按钮（同意/驳回），不放进通用 QUICK_ACTIONS
 const QUICK_ACTIONS = {
+  pay:               [{ to: 'cancelled', label: '取消' }],
   audit:             [{ to: 'cancelled', label: '取消' }],
   send:              [{ to: 'cancelled', label: '取消' }],
   pending_cancel:    [],
@@ -1021,6 +1074,8 @@ export default {
     const notesLoading = ref(false);
     const noteInput = ref('');
     const noteSubmitting = ref(false);
+    const renewals = ref([]);
+    const renewalsLoading = ref(false);
 
     // 预授权扣款（信用免押 方案 A）
     const charges = ref([]);
@@ -1127,6 +1182,9 @@ export default {
 
     // 支付宝商家订单同步重试 loading
     const resyncing = ref(false);
+    // 正在重试租金结算的订单号：既用来只 disable 那一行的按钮，
+    // 也充当并发闸——一次只跑一单，避免连点把支付宝打满。
+    const retryingRent = ref('');
 
     const fmt = (v) => {
       const n = Number(v);
@@ -1147,6 +1205,11 @@ export default {
     };
 
     const statusCls = (s) => TAGS_BY_STATUS[s] || 'tag-gray';
+
+    // 「押金已冻结但租金没结清」的单一律标红：它挂在 audit 下，但跟"用户还没付款"
+    // 是两回事——钱已经冻在支付宝了，运营必须能一眼分辨。
+    const orderStatusCls = (o) =>
+      (o && o.rent_capture_pending ? 'tag-red' : statusCls(o && o.status));
 
     const countOf = (key) => {
       if (key === 'all') return statsCount.value.total ?? null;
@@ -1263,12 +1326,23 @@ export default {
         loadAlipayDetail();
         loadCharges();
         loadNotes();
+        loadRenewals();
         loadInvCard();   // 异步拉光影商品卡片+租赁记录，不阻塞详情主体渲染
         // 物流轨迹：先清空再拉，避免上一单的轨迹闪现在这一单上
         Object.assign(logi, { loading: false, loaded: false, supported: false,
                               routes: [], signed_at: '', synced_at_text: '', error: '' });
         if ((full.logistics_no || '').trim()) loadLogistics();
       } catch (e) { alert(e.message || '加载失败'); }
+    };
+
+    const loadRenewals = async () => {
+      if (!detail.value) return;
+      renewalsLoading.value = true;
+      try {
+        const r = await api.listOrderRenewals(detail.value.id);
+        renewals.value = r.list || [];
+      } catch (e) { renewals.value = []; }
+      finally { renewalsLoading.value = false; }
     };
 
     // ── 物流轨迹 ──
@@ -1692,6 +1766,30 @@ export default {
       }
     };
 
+    // 手动重试「综合授权成功后自动收租金」。
+    // 后端幂等（固定 out_trade_no，先 query 后 pay），点多少次都不会重复扣款；
+    // 收上来即 audit → send，收不上来把支付宝的原话摊给运营看。
+    const retryRentCapture = async (o) => {
+      if (!o || retryingRent.value) return;
+      retryingRent.value = o.id;
+      try {
+        const r = await api.retryRentCapture(o.id);
+        if (detail.value && detail.value.id === o.id) {
+          detail.value = { ...detail.value, ...r };
+        }
+        await reload();
+        if (r.status === 'send') {
+          alert('租金已结清，订单已进入待发货');
+        } else {
+          alert(`仍未结清：${r.rent_capture_error || '支付宝未确认到账'}`);
+        }
+      } catch (e) {
+        alert(e.message || '重试失败');
+      } finally {
+        retryingRent.value = '';
+      }
+    };
+
     const submitShip = async () => {
       const f = shipForm.value;
       if (!f || !canSubmitShip.value) return;
@@ -1718,7 +1816,10 @@ export default {
       // 「取消」单独走带解冻的专用接口：直接改状态到 cancelled 不会解冻押金，
       // 会把用户预授权冻结额一直卡到到期，故必须走 admin-cancel。
       if (act.to === 'cancelled') return forceCancel(o);
-      if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？`)) return;
+      const overdueHint = act.to === 'overdue'
+        ? '\n\n标记后将立即向支付宝订单中心上报 OVERDUE，并关闭待支付续租申请。'
+        : '';
+      if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？${overdueHint}`)) return;
       try {
         await api.update('orders', o.id, { status: act.to });
         await reload();
@@ -1853,6 +1954,7 @@ export default {
       detail, invCardLoading, editStatus, forceStatus, saving,
       logi, loadLogistics,
       notes, notesLoading, noteInput, noteSubmitting, loadNotes, submitNote,
+      renewals, renewalsLoading, loadRenewals,
       alipay, alipayLoading, loadAlipayDetail, failHeadline,
       charges, chargesLoading, chargeBusy, chargeForm, chargeSubmitting,
       chargeReasonTypes, chargeSubjectPreview,
@@ -1864,6 +1966,7 @@ export default {
       openShip, closeShip, onWaybillInput, submitShip,
       uiCfg, onHuohaoInput, invPics, invCover, rentActionLabel, rentRecordText, fillWaybillFromRent,
       resyncing, resync,
+      retryingRent, retryRentCapture, orderStatusCls,
       approveCancel, rejectCancel,
       approveReturn, rejectReturn,
       adminReturnForm, openAdminReturnShip, closeAdminReturnShip, submitAdminReturnShip,
@@ -2194,6 +2297,28 @@ export default {
 }
 .freeze-countdown-big.expired {
   color: #b0b3ba;
+}
+
+/* 押金已冻结、租金没收上来的告警块（订单详情「订单状态」下方） */
+.rent-stuck {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ffccc7;
+  border-radius: 8px;
+  background: #fff4ee;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #a8321a;
+}
+.rent-stuck-err {
+  margin-top: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  color: #7a2412;
+}
+.rent-stuck .btn {
+  margin-top: 8px;
 }
 
 /* 预授权扣款（信用免押 方案 A） */

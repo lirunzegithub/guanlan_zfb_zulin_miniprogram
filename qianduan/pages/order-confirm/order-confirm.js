@@ -43,7 +43,7 @@ Page({
     feeSheet: false,           // 底部实付明细展开
     submitting: false,
 
-    freezeIncludesRent: true,  // 冻结口径：押金+租金 / 仅押金
+    freezeIncludesRent: true,  // 新订单固定：押金+租金一次综合授权
     depositNote: '',           // 押金卡说明，按冻结口径在 _recalcFee 里拼
     // 全部预格式化，axml 不做运算
     fee: {
@@ -90,8 +90,7 @@ Page({
     // 运营配置：只取展示口径，失败静默走默认值
     try {
       const c = await get('/api/service/config', {}, { hideError: true });
-      // 仅当后端明确返回 false 才改（兼容老后端无此字段）
-      this.setData({ freezeIncludesRent: !(c && c.freeze_includes_rent === false) });
+      this.setData({ freezeIncludesRent: true });
     } catch (e) {}
 
     if (!(await this.loadProduct())) {
@@ -221,7 +220,7 @@ Page({
     // includes_rent 打开时冻结的是「押金 + 租金」，只说"冻结押金"会漏掉一半金额。
     const depTxt = pricing.fmtAmount(deposit);
     const depositNote = this.data.freezeIncludesRent
-      ? `下单后将预授权冻结 ¥${pricing.fmtAmount(freeze)}（押金 ¥${depTxt} + 租金 ¥${pricing.fmtAmount(payRent)}），不会实际扣款；芝麻信用达标即可免除押金部分，归还后自动解冻。`
+      ? `将一次授权 ¥${pricing.fmtAmount(freeze)}（押金 ¥${depTxt} + 租金 ¥${pricing.fmtAmount(payRent)}）；授权成功后租金立即实付，押金部分按芝麻信用结果免押/冻结，归还后解除。`
       : `押金以预授权方式冻结 ¥${depTxt}，不会实际扣款；芝麻信用达标即可全额免押，归还后自动解冻。`;
 
     this.setData({

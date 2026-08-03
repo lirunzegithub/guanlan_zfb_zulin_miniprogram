@@ -37,9 +37,7 @@ _DEFAULTS: dict[str, Any] = {
     # 软件 LOGO：后台浏览器标签页 favicon + 左上角品牌图标；小程序"我的"头像。
     # 存相对路径（/product/asset/products/uploads/<f>）或绝对 URL；空 = 用默认占位
     "logo_url":             "",
-    # 冻结模式：True = 押金 + 总租金一起冻结（默认，保持历史行为）
-    #          False = 仅冻结押金（租金到期再扣）
-    # 注：只影响"新建订单"；已下单订单的 freeze_amount 已落库快照，不受影响
+    # 方案 A：新订单固定“押金+租金一次综合授权”，授权后自动收租金。
     "freeze_includes_rent": True,
     # 是否允许用户在租期日历上"手动点选"起止日期：
     #   True  = 快捷预设 + 日历手选都可用（默认）

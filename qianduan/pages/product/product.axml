@@ -14,7 +14,7 @@
     >
       <block a:for="{{p.covers}}" a:key="*this">
         <swiper-item>
-          <image class="hero-img" src="{{item}}" mode="aspectFill" />
+          <view class="hero-img"><smart-image style="display:block;width:100%;height:100%" src="{{item}}" mode="aspectFill" lazyLoad="{{false}}" /></view>
         </swiper-item>
       </block>
     </swiper>
@@ -138,7 +138,7 @@
           <view a:if="{{cmt.images && cmt.images.length}}" class="rev-imgs">
             <block a:for="{{cmt.images}}" a:for-item="img" a:for-index="ii" a:key="*this">
               <view class="rev-img-cell" data-ci="{{ci}}" data-i="{{ii}}" onTap="onPreviewCmtImage">
-                <image class="rev-img" src="{{img}}" mode="aspectFill" />
+                <view class="rev-img"><smart-image style="display:block;width:100%;height:100%" src="{{img}}" mode="aspectFill" /></view>
               </view>
             </block>
           </view>
@@ -272,7 +272,7 @@
            芝麻信用完整品牌表达（LOGO + 「芝麻信用｜免押金」）由页面顶部的
            .zhima-bar 承载，按钮本身保持单一行动文案。 -->
       <view a:if="{{p.status !== 'on'}}" class="bb-rent sold-out">已下架</view>
-      <view a:elif="{{p.stock > 0}}" class="bb-rent" onTap="onRent">去免押金</view>
+      <view a:elif="{{p.stock > 0}}" class="bb-rent" onTap="onRent">去租赁</view>
       <view a:else class="bb-rent sold-out">已租罄</view>
     </view>
   </view>
@@ -317,38 +317,51 @@
 
   <!-- 规格 + 租期选择抽屉（日历版）
        只负责「选」：选完点确认跳确认订单页，优惠券/地址/协议/下单都在那边。 -->
-  <view a:if="{{rentSheet}}" class="rent-mask" onTap="closeRentSheet">
+  <!-- catchTouchMove：吃掉冒泡上来的滑动，防止在抽屉上滑动时把底下的详情页
+       一起带着滚（滚动穿透）。抽屉内的 .rs-body 是 scroll-view，自身滚动由
+       原生处理，不受这个 catch 影响。 -->
+  <view
+    a:if="{{rentSheet}}"
+    class="rent-mask"
+    onTap="closeRentSheet"
+    catchTouchMove="noop"
+  >
     <!-- has-cal：日历展开时抽屉定高，让日历滚动区拿得到高度；收起时抽屉按内容收缩 -->
     <view class="rent-sheet {{calOpen ? 'has-cal' : ''}}" catchTap="noop">
       <!-- 关闭按钮浮在抽屉右上角，不再单占一行——那行除了这个 × 全是空白。
            摘要区靠 padding-right 给它让出位置。 -->
       <text class="cal-close" onTap="closeRentSheet">×</text>
 
-      <!-- 中间统一滚动区：摘要 / 规格 / 租期 / 日历 全在这里滚。
+      <!-- 商品摘要：当前规格下的日均价 + 该租期总租金，随选择实时变。
+           固定在抽屉顶部（在滚动区之外），选规格/租期时价格始终可见，
+           不会被下方 SKU 与日历一起滚出屏幕。 -->
+      <view class="rs-summary">
+        <view a:if="{{p.covers && p.covers.length}}" class="rs-thumb">
+          <smart-image style="display:block;width:100%;height:100%" src="{{p.covers[0]}}" mode="aspectFill" />
+        </view>
+        <view a:else class="rs-thumb rs-thumb-ph"></view>
+        <view class="rs-sum-body">
+          <view class="rs-price">
+            <text class="rs-price-cny">¥</text>
+            <text class="rs-price-num">{{rent.pricePerDay || p.min_price}}</text>
+            <text class="rs-price-unit">/天</text>
+          </view>
+          <text a:if="{{rent.rentDays > 0}}" class="rs-sum-sub">租{{rent.rentDays}}天总租金 ¥{{rent.total}}</text>
+          <text a:else class="rs-sum-sub">请选择租期</text>
+          <!-- 押金原本在底部条上，底部改成单一确认按钮后挪到这里，
+               别让用户到确认页才第一次看见这个数 -->
+          <text a:if="{{rent.deposit > 0}}" class="rs-sum-dep">押金 ¥{{rent.deposit}} 预冻结 · 免押可不付</text>
+        </view>
+      </view>
+
+      <!-- 中间统一滚动区：规格 / 租期 / 日历 全在这里滚。
            小程序的 scroll-view 必须有确定高度才滚得动，所以只在这里放一层
            （靠 .rent-sheet 定高 + flex:1 拿到高度），内部各块一律用普通 view。
            之前 SKU 列表和日历各自嵌套 scroll-view 却没高度，才会被裁成半截。 -->
-      <scroll-view class="rs-body" scroll-y>
-
-        <!-- 商品摘要：当前规格下的日均价 + 该租期总租金，随选择实时变 -->
-        <view class="rs-summary">
-          <image
-            a:if="{{p.covers && p.covers.length}}"
-            class="rs-thumb" src="{{p.covers[0]}}" mode="aspectFill" />
-          <view a:else class="rs-thumb rs-thumb-ph"></view>
-          <view class="rs-sum-body">
-            <view class="rs-price">
-              <text class="rs-price-cny">¥</text>
-              <text class="rs-price-num">{{rent.pricePerDay || p.min_price}}</text>
-              <text class="rs-price-unit">/天</text>
-            </view>
-            <text a:if="{{rent.rentDays > 0}}" class="rs-sum-sub">租{{rent.rentDays}}天总租金 ¥{{rent.total}}</text>
-            <text a:else class="rs-sum-sub">请选择租期</text>
-            <!-- 押金原本在底部条上，底部改成单一确认按钮后挪到这里，
-                 别让用户到确认页才第一次看见这个数 -->
-            <text a:if="{{rent.deposit > 0}}" class="rs-sum-dep">押金 ¥{{rent.deposit}} 预冻结 · 免押可不付</text>
-          </view>
-        </view>
+      <!-- trap-scroll：滚到顶/底后继续滑，只在 scroll-view 内部消化，不把滚动
+           传导给底下的详情页。遮罩上的 catchTouchMove 拦不住这一段——scroll-view
+           的边界滚动链是原生行为，不走事件冒泡。 -->
+      <scroll-view class="rs-body" scroll-y trap-scroll="{{true}}">
 
         <!-- 规格套餐（多 SKU 才出现） -->
         <view a:if="{{skus.length > 1}}" class="rs-block">
@@ -359,9 +372,10 @@
               data-i="{{index}}"
               onTap="onSkuTap"
             >
+              <!-- 只留规格名：日均价与押金已由顶部固定摘要按当前选择实时展示，
+                   在每一行里重复一遍反而把列表撑长、也和摘要打架 -->
               <view class="rs-sku-l">
                 <text class="rs-sku-name">{{item.name}}</text>
-                <text class="rs-sku-meta">¥{{item.min_price}}/天起 · 押金 ¥{{item.deposit_amount}}</text>
               </view>
               <text a:if="{{!(item.stock > 0)}}" class="rs-sku-out">无货</text>
             </view>
@@ -406,12 +420,17 @@
                     <view a:if="{{cell.empty}}" class="cal-cell cal-cell--empty"></view>
                     <view
                       a:else
-                      class="cal-cell cal-cell--{{cell.status}} {{cell.isShip ? 'is-ship' : ''}} {{cell.endDisabled ? 'end-disabled' : ''}} {{cell.isEarliestEnd ? 'is-earliest' : ''}}"
+                      class="cal-cell cal-cell--{{cell.status}} {{cell.isShip ? 'is-ship' : ''}} {{cell.isRentStart ? 'is-rent-start' : ''}} {{cell.endDisabled ? 'end-disabled' : ''}} {{cell.isEarliestEnd ? 'is-earliest' : ''}}"
                       data-ymd="{{cell.ymd}}"
                       onTap="onCalDayTap"
                     >
-                      <text a:if="{{cell.status === 'start' || cell.status === 'start-only'}}" class="cal-tag">起租</text>
-                      <text a:elif="{{cell.status === 'end'}}" class="cal-tag">归还</text>
+                      <!-- 标签优先级：归还 > 起租 > 发货 > 最早可还。
+                           「起租」标在开始计费那天（= 发货日 + 物流期），不是用户点的那天；
+                           用户点的那天只是发货日，之后的 ship 天走物流、免租。
+                           物流期配成 0 时两者重合，靠这个顺序让「起租」压过「发货」。 -->
+                      <text a:if="{{cell.status === 'end'}}" class="cal-tag">归还</text>
+                      <text a:elif="{{cell.isRentStart}}" class="cal-tag">起租</text>
+                      <text a:elif="{{cell.status === 'start' || cell.status === 'start-only'}}" class="cal-tag">发货</text>
                       <text a:elif="{{cell.isEarliestEnd}}" class="cal-tag cal-tag--earliest">最早可还</text>
                       <text class="cal-day">{{cell.day}}</text>
                       <text a:if="{{cell.priceText}}" class="cal-price {{cell.priceText === '物流' ? 'is-ship' : ''}}">{{cell.priceText}}</text>

@@ -2,4 +2,7 @@
   "defaultTitle": "商品详情",
   "titleBarColor": "#ffffff",
   "backgroundColor": "#f4f7fb"
+  ,"usingComponents": {
+    "smart-image": "/components/smart-image/smart-image"
+  }
 }

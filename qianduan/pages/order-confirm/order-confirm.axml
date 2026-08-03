@@ -42,7 +42,7 @@
     <view class="card">
       <view class="sec-title">商品信息</view>
       <view class="goods">
-        <image a:if="{{cover}}" class="goods-img" src="{{cover}}" mode="aspectFill" />
+        <view a:if="{{cover}}" class="goods-img"><smart-image style="display:block;width:100%;height:100%" src="{{cover}}" mode="aspectFill" /></view>
         <view a:else class="goods-img goods-img-ph"></view>
         <view class="goods-body">
           <view class="goods-row1">
@@ -180,7 +180,7 @@
         <text class="bb-sub">另冻结押金 ¥{{fee.depositText}}，达标免押</text>
       </view>
       <view class="bb-submit {{submitting ? 'is-busy' : ''}}" onTap="onSubmit">
-        {{submitting ? '提交中…' : '确认下单'}}
+        {{submitting ? '创建订单…' : '免押下单'}}
       </view>
     </view>
 
@@ -258,7 +258,7 @@
         <view class="agree-pop-foot">
           <view class="agree-pop-btn ghost" onTap="closeAgreeSheet">取消</view>
           <view class="agree-pop-btn main {{submitting ? 'is-busy' : ''}}" onTap="onAgreeAndSubmit">
-            {{submitting ? '提交中…' : '同意并下单'}}
+            {{submitting ? '创建订单…' : '同意并免押下单'}}
           </view>
         </view>
       </view>

@@ -441,7 +441,12 @@ def credit_query():
             )
         else:
             from app.routes.orders import transition_freeze_done
-            transition_freeze_done(order_id)   # 用裸订单号推进状态机
+            transition_freeze_done(order_id)   # 综合授权 → 自动收租金 → 待发货
+    latest = order_repo.get(order_id) if _order else None
+    if latest:
+        res["order_status"] = latest.get("status") or ""
+        res["rent_captured"] = bool(latest.get("rent_paid_at"))
+        res["rent_capture_error"] = latest.get("rent_payment_error") or ""
     return ok(res)
 
 
@@ -676,7 +681,14 @@ def notify_trade():
                     trade_repo.update(out_trade_no, patch)
         if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED"):
             from app.routes.orders import transition_trade_paid
-            transition_trade_paid(out_trade_no)
+            from app.routes.orders import complete_renewal
+            completed = complete_renewal(
+                out_trade_no,
+                trade_no=params.get("trade_no") or "",
+                raw=dict(params),
+            )
+            if completed is None:
+                transition_trade_paid(out_trade_no)
         _log_notify("trade", params, True, True)
         return _NOTIFY_OK
     except Exception as e:

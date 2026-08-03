@@ -27,7 +27,7 @@
         </view>
         <view class="o-body">
           <view class="o-thumb">
-            <image a:if="{{item.product_cover}}" class="o-thumb-img" src="{{item.product_cover}}" mode="aspectFill" />
+            <view a:if="{{item.product_cover}}" class="o-thumb-img"><smart-image style="display:block;width:100%;height:100%" src="{{item.product_cover}}" mode="aspectFill" /></view>
             <block a:else>
               <view class="o-thumb-tag">仅限</view>
               <view class="o-thumb-tag2">「免押认证」</view>

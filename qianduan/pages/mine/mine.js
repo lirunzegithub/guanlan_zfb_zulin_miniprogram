@@ -5,7 +5,7 @@ const requireLogin = require('../../utils/login.js');
 const HIDDEN_ORDER_STATUS = new Set(['cancelled', 'done']);
 
 const STATUS_TEXT = {
-  pay: '待支付', audit: '待免押',
+  pay: '待付租金', audit: '待免押',
   send: '待发货', pending_cancel: '取消审核中',
   recv: '待收货', using: '租赁中',
   return: '待归还', overdue: '已逾期',
@@ -87,7 +87,7 @@ Page({
     displayName: '尊敬的用户',
     displaySub: '',
     orderTabs: [
-      { key: 'pay',  name: '待支付', cls: 'pay'   },
+      { key: 'pay',  name: '待付租金', cls: 'pay'   },
       { key: 'send', name: '待发货', cls: 'send'  },
       { key: 'recv', name: '待收货', cls: 'recv'  },
       { key: 'using',name: '租赁中', cls: 'using' },

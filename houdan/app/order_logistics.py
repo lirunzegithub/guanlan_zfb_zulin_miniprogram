@@ -125,7 +125,7 @@ def fetch(order: dict, *, force: bool = False) -> dict:
         return base
 
     phone = ((order.get("address_snapshot") or {}).get("receiver_phone") or "")
-    ok, data, code, raw_routes = sf_client._route_query(base["waybill_no"], phone)
+    ok, data, code, raw_routes = sf_client.route_query_for_order(base["waybill_no"], phone)
     if not ok:
         # 取数失败不清空缓存：宁可给用户看半小时前的轨迹，也好过整块消失
         base["error"] = str(data)

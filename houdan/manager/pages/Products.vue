@@ -428,10 +428,35 @@
                 <span class="swatch" :style="shotStyle(s.cover_url)"></span>
                 {{ s.name }}
               </td>
-              <td>¥{{ s.deposit_amount || 0 }}</td>
+              <td>
+                <div class="sku-inline-money">
+                  <span>¥</span>
+                  <input type="number" min="0.01" step="0.01" class="sku-inline-input"
+                    v-model.number="s.deposit_amount"
+                    :disabled="skuInlineSaving['deposit_amount:' + s.id]"
+                    @focus="onSkuInlineFocus(s, 'deposit_amount')"
+                    @blur="saveSkuInline(s, 'deposit_amount')"
+                    @keydown.enter="$event.target.blur()" @dragstart.stop />
+                </div>
+              </td>
               <td>¥{{ s.min_price || 0 }}/天</td>
-              <td :class="{ 'stock-zero': !(s.stock > 0) }">{{ s.stock }}</td>
-              <td>{{ s.sales || 0 }}</td>
+              <td>
+                <input type="number" min="0" step="1"
+                  :class="['sku-inline-input', { 'stock-zero': !(s.stock > 0) }]"
+                  v-model.number="s.stock"
+                  :disabled="skuInlineSaving['stock:' + s.id]"
+                  @focus="onSkuInlineFocus(s, 'stock')"
+                  @blur="saveSkuInline(s, 'stock')"
+                  @keydown.enter="$event.target.blur()" @dragstart.stop />
+              </td>
+              <td>
+                <input type="number" min="0" step="1" class="sku-inline-input"
+                  v-model.number="s.sales"
+                  :disabled="skuInlineSaving['sales:' + s.id]"
+                  @focus="onSkuInlineFocus(s, 'sales')"
+                  @blur="saveSkuInline(s, 'sales')"
+                  @keydown.enter="$event.target.blur()" @dragstart.stop />
+              </td>
               <td>
                 <span :class="['tag', s.status === 'on' ? 'tag-green' : 'tag-gray']">
                   {{ s.status === 'on' ? '在售' : '下架' }}
@@ -1112,6 +1137,8 @@ export default {
     const skuForm = ref(null);       // null = 未在编辑
     const skuLoading = ref(false);
     const skuSaving = ref(false);
+    const skuInlineSaving = ref({});
+    const skuInlineOriginal = {};
     const skuTierError = ref('');
     const skuCoverUploading = ref(false);
 
@@ -1236,6 +1263,44 @@ export default {
       };
       skuTierError.value = '';
       resetRentTargets();
+    };
+
+    const onSkuInlineFocus = (s, field) => {
+      skuInlineOriginal[`${field}:${s.id}`] = Number(s[field] || 0);
+    };
+
+    // 押金 / 库存 / 销量在列表内直接改，离开输入框即保存，无需先进入编辑表单。
+    const saveSkuInline = async (s, field) => {
+      const key = `${field}:${s.id}`;
+      if (skuInlineSaving.value[key]) return;
+      const oldValue = skuInlineOriginal[key];
+      let value = Number(s[field]);
+      const integerField = field === 'stock' || field === 'sales';
+      const invalid = !Number.isFinite(value)
+        || (field === 'deposit_amount' ? value <= 0 : value < 0)
+        || (integerField && !Number.isInteger(value));
+      if (invalid) {
+        s[field] = oldValue;
+        alert(field === 'deposit_amount' ? '押金必须大于 0' : `${field === 'stock' ? '库存' : '销量'}必须是非负整数`);
+        return;
+      }
+      if (field === 'deposit_amount') value = Math.round(value * 100) / 100;
+      s[field] = value;
+      if (oldValue === value) return;
+
+      skuInlineSaving.value = { ...skuInlineSaving.value, [key]: true };
+      try {
+        const saved = await api.updateSku(s.id, { [field]: value });
+        if (saved) Object.assign(s, saved);
+        skuInlineOriginal[key] = Number(s[field] || 0);
+      } catch (e) {
+        s[field] = oldValue;
+        alert(e.message || '保存失败');
+      } finally {
+        const next = { ...skuInlineSaving.value };
+        delete next[key];
+        skuInlineSaving.value = next;
+      }
     };
 
     const onSkuCoverPick = async (e) => {
@@ -1499,11 +1564,12 @@ export default {
       openNew, openEdit, openClone, cloneSrc, save, remove,
       tierError, onTierFromInput, onTierPriceInput, addTier, removeTier,
       onTierFromBlur, onTierPriceBlur,
-      skuModal, skuProduct, skuList, skuForm, skuLoading, skuSaving,
+      skuModal, skuProduct, skuList, skuForm, skuLoading, skuSaving, skuInlineSaving,
       skuTierError, skuCoverUploading,
       skuDragFrom, skuDragOver, skuOrderDirty, skuOrderSaving,
       onSkuDragStart, onSkuDrop, onSkuDragEnd, moveSku, saveSkuOrder, loadSkus,
       openSkus, closeSkus, newSku, editSku, saveSku, removeSku, onSkuCoverPick,
+      onSkuInlineFocus, saveSkuInline,
       openSkusFromForm, formSkuCount, DEFAULT_SKU_NAME, depositText,
       onSkuTierFromInput, onSkuTierPriceInput, addSkuTier, removeSkuTier,
       onSkuTierFromBlur, onSkuTierPriceBlur, skuRentPreview, skuTierRising,
@@ -1607,6 +1673,28 @@ export default {
 .sku-table .swatch { margin-right: 8px; vertical-align: middle; }
 .sku-row-on > td { background: #f2f7ff; }
 .stock-zero { color: #e0483a; font-weight: 600; }
+.sku-inline-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: #f5f7fa;
+  color: inherit;
+  font: inherit;
+  box-sizing: border-box;
+}
+.sku-inline-input:hover { border-color: #d8dde6; background: #fff; }
+.sku-inline-input:focus {
+  outline: none;
+  border-color: var(--primary, #2b7cff);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(43, 124, 255, .1);
+}
+.sku-inline-input:disabled { opacity: .6; cursor: wait; }
+.sku-inline-money { display: flex; align-items: center; gap: 2px; }
+.sku-inline-money > span { color: #6b7280; }
 .stock-bysku { cursor: pointer; font-size: 12px; }
 .stock-bysku:hover { color: #2b7cff; }
 .sku-edit {

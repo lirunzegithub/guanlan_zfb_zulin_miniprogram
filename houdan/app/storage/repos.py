@@ -218,6 +218,15 @@ order_repo = SqliteRepository(
         # 下单后写一次就不动；后台改 setting 不影响历史订单
         "freeze_amount":        0.0,
         "freeze_includes_rent": True,
+        # 首期租金普通交易（新订单 pay → audit）
+        "rent_out_trade_no": "", "rent_trade_no": "", "rent_trade_status": "",
+        "rent_paid_at": 0, "rent_payment_error": "", "rent_payment_raw": {},
+        "rent_refund_request_no": "", "rent_refunded_at": 0, "rent_refunded_amount": 0.0,
+        "rent_refund_error": "", "rent_refund_raw": {},
+        "rent_capture_attempts": 0,
+        # 综合授权后自动收租金的留痕：last_at 供定时重试算退避，
+        # last_error 是 auth_trade_pay 抛出的支付宝原文（含 sub_code/sub_msg）
+        "rent_capture_last_at": 0, "rent_capture_last_error": "",
         "status": "audit",
         "address_id": 0, "address_snapshot": {},
         "lock_until": None, "certify_id": None,
@@ -304,6 +313,23 @@ trade_repo = SqliteRepository(
         "operator":     "",        # 触发操作的工作人员 username
         "paid_at":      None,
         "closed_at":    None,
+    },
+    id_type="str",
+)
+
+# 续租服务单（字符串 id，如 R8F2A1C...）。续租款走用户主动的普通支付，
+# 不直接从原租赁订单的免押授权额度中扣除。
+renewal_repo = SqliteRepository(
+    DB_PATH, "renewals",
+    default_fields={
+        "order_id": "", "user_id": "",
+        "status": "WAITING_PAY",  # WAITING_PAY / COMPLETED / CANCELLED / PAYMENT_EXCEPTION
+        "original_end_date": "", "new_end_date": "", "renew_days": 0,
+        "original_days": 0, "new_total_days": 0,
+        "quoted_amount": 0.0, "pricing_snapshot": [],
+        "out_trade_no": "", "trade_no": "", "trade_status": "",
+        "paid_at": None, "completed_at": None, "cancelled_at": None,
+        "failure_reason": "", "raw_query": {},
     },
     id_type="str",
 )
@@ -473,7 +499,7 @@ def _backfill_order_freeze_amount() -> None:
             continue  # 数据完全空也跳过，没意义
         order_repo.update(o["id"], {
             "freeze_amount":        amt,
-            "freeze_includes_rent": True,  # 历史订单默认按"押金+租金"
+            "freeze_includes_rent": True,  # 无快照的历史订单仍按"押金+租金"
         })
         fixed += 1
     if fixed:

@@ -15,6 +15,7 @@ const STATUS_TEXT = {
 // audit（待免押）提供"去免押 / 付押金"：用户中途退出后可随时回来继续支付，
 // 后端按已发起次数续号（_A2/_A3…）支持重复拉起收银台
 function actionFor(status) {
+  if (status === 'pay')            return { key: 'rent', label: '支付租金', primary: true };
   if (status === 'audit')          return { key: 'credit', label: '去免押 / 付押金', primary: true };
   if (status === 'send')           return { key: 'detail', label: '查看物流', primary: false };
   if (status === 'pending_cancel') return { key: 'detail', label: '查看进度', primary: false };
@@ -117,11 +118,12 @@ Page({
   },
   async onAction(e) {
     const { id, key } = e.currentTarget.dataset;
-    // 免押/付押金入口先过实名（与 onCredit 一致），其余动作直接跳详情页自处理
-    if (key === 'credit') {
+    // 租金支付/免押入口先过实名，其余动作直接跳详情页自处理
+    if (key === 'credit' || key === 'rent') {
       const ok = await requireRealName();
       if (!ok) return;
     }
-    my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + (key === 'credit' ? '&credit=1' : '') });
+    const suffix = key === 'credit' ? '&credit=1' : (key === 'rent' ? '&rent=1' : '');
+    my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + suffix });
   },
 });

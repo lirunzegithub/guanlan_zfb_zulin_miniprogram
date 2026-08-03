@@ -86,6 +86,8 @@ export const api = {
   uiConfig: () => http.get('/ui-config'),
   // 重试支付宝商家订单同步（alipay.merchant.order.sync）
   resyncOrder: (oid) => http.post(`/orders/${oid}/sync`),
+  // 重试「综合授权成功后自动收租金」：收上来即 audit → send。幂等，可反复点
+  retryRentCapture: (oid) => http.post(`/orders/${oid}/rent/retry`),
   // 用户取消申请审核（pending_cancel 状态专用）
   approveOrderCancel: (oid) => http.post(`/orders/${oid}/cancel-approve`),
   rejectOrderCancel:  (oid, reason = '') => http.post(`/orders/${oid}/cancel-reject`, { reason }),
@@ -100,6 +102,7 @@ export const api = {
   // 订单备注（仅工作人员可见的独立审计日志）
   listOrderNotes: (oid) => http.get(`/orders/${oid}/notes`),
   addOrderNote:   (oid, content) => http.post(`/orders/${oid}/notes`, { content }),
+  listOrderRenewals: (oid) => http.get(`/orders/${oid}/renewals`),
 
   // 预授权扣款（信用免押 方案 A）
   listCharges:   (oid) => http.get(`/orders/${oid}/charges`),

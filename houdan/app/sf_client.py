@@ -212,9 +212,8 @@ def query_signed_at(waybill_no: str, check_phone: str = "") -> tuple[str, int | 
 
     Args:
         waybill_no:  顺丰运单号
-        check_phone: 收件人手机号（本函数自行截后四位）。顺丰对非月结卡号下的
-                     运单强制要求手机号后四位校验，月结单可不传；一律传上更稳，
-                     且订单里本来就有收货人手机号快照。
+        check_phone: 收件人手机号（本函数自行截后四位）。月结单先不传
+                     手机号查询；只有查不到时，才用后四位重试，以兼容非月结单。
 
     Returns:
         (STATUS_SIGNED, 签收时间 unix 秒)
@@ -229,32 +228,9 @@ def query_signed_at(waybill_no: str, check_phone: str = "") -> tuple[str, int | 
     if not no:
         return STATUS_ERROR, "运单号为空"
 
-    msg_data: dict = {
-        "trackingType":   "1",     # 1 = 顺丰运单号
-        "trackingNumber": [no],    # 接口本身支持批量，但 checkPhoneNo 是全局单值，
-                                   # 不同订单收件人不同，只能一单一查
-        "methodType":     "1",     # 1 = 标准查询
-    }
-    digits = "".join(ch for ch in (check_phone or "") if ch.isdigit())
-    if len(digits) >= 4:
-        msg_data["checkPhoneNo"] = digits[-4:]
-
-    ok, data, _code = _post(SERVICE_ROUTE_QUERY, msg_data)
+    ok, data, _code, routes = route_query_for_order(no, check_phone)
     if not ok:
         return STATUS_ERROR, str(data)
-
-    resps = (data or {}).get("routeResps") or []
-    if not isinstance(resps, list) or not resps:
-        return STATUS_ERROR, "顺丰未返回该运单的轨迹"
-
-    # 一单一查，取第一组即可；顺带核对 mailNo，防止串号
-    routes: list = []
-    for item in resps:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("mailNo") or "").strip().upper() not in ("", no):
-            continue
-        routes.extend(item.get("routes") or [])
 
     signed_at = _pick_signed_route(routes)
     if signed_at:
@@ -289,6 +265,24 @@ def _route_query(waybill_no: str, check_phone: str = "") -> tuple[bool, object, 
             if isinstance(it, dict):
                 routes.extend(it.get("routes") or [])
     return ok, data, code, routes
+
+
+def route_query_for_order(waybill_no: str, check_phone: str = "") -> tuple[bool, object, str, list]:
+    """订单正式链路的路由查询：先按月结单不带手机号查，失败才带后四位重试。
+
+    月结权限已开通时，checkPhoneNo 反而可能因订单收件人与运单实际
+    收件人不一致而把正常轨迹过滤掉。非月结单仍可通过第二次查询兼容。
+    """
+    first = _route_query(waybill_no)
+    # 业务响应 success=true 但 routeResps 为空时，仍可能是缺手机号
+    # 校验；只有真正拿到轨迹才算月结免校验查询成功。
+    if first[0] and first[3]:
+        return first
+
+    digits = "".join(ch for ch in (check_phone or "") if ch.isdigit())
+    if len(digits) < 4:
+        return first
+    return _route_query(waybill_no, digits[-4:])
 
 
 def selfcheck(waybill_no: str = "", check_phone: str = "") -> dict:

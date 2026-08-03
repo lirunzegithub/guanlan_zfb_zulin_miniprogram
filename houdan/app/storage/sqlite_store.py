@@ -216,6 +216,31 @@ class SqliteRepository(BaseRepository):
             ).fetchone()
         return int(row[0]) if row else None
 
+    def increment(self, oid: Any, field: str, by: int = 1) -> Optional[int]:
+        """原子累加 payload 里的某个整数字段（如销量 sales）。
+
+        字段不存在或为 null 时按 0 起算。返回累加后的值；
+        记录不存在时返回 None。field 必须是代码内写死的字段名。
+        """
+        with self._lock, self._conn() as conn:
+            cur = conn.execute(
+                f"UPDATE {self.table} "
+                f"SET payload = json_set(payload, '$.{field}', "
+                f"        COALESCE(CAST(json_extract(payload, '$.{field}') AS INTEGER), 0) + ?), "
+                f"    updated_at = ? "
+                f"WHERE id = ?",
+                (by, int(time.time()), oid),
+            )
+            conn.commit()
+            if cur.rowcount == 0:
+                return None
+            row = conn.execute(
+                f"SELECT CAST(json_extract(payload, '$.{field}') AS INTEGER) "
+                f"FROM {self.table} WHERE id = ?",
+                (oid,),
+            ).fetchone()
+        return int(row[0]) if row else None
+
     def delete(self, oid: Any) -> bool:
         """物理删除：DELETE FROM。记录不存在返回 False。
 
