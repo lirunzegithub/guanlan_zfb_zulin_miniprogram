@@ -2,7 +2,7 @@ const { get, post } = require('../../utils/request.js');
 const requireRealName = require('../../utils/realname.js');
 
 const STATUS_TEXT = {
-  pay: '待支付', audit: '待免押',
+  audit: '待免押',
   send: '待发货', pending_cancel: '取消审核中',
   recv: '待收货', using: '租赁中',
   return: '待归还', overdue: '已逾期',
@@ -44,7 +44,7 @@ Page({
   },
   onLoad(q) {
     if (q && q.key) {
-      const map = { pay: 'pay', send: 'send', recv: 'recv', using: 'using', all: 'all' };
+      const map = { audit: 'audit', send: 'send', recv: 'recv', using: 'using', all: 'all' };
       this.setData({ cur: map[q.key] || q.key });
     }
     this.loadTabs().then(() => this.loadList());
@@ -73,7 +73,7 @@ Page({
           _amountText: (o.amount || 0).toFixed(2),
           _shortName: shortName(o.product_name) + ' 租赁',
           _action: actionFor(o.status),
-          _canCancel: ['audit', 'pay'].includes(o.status),
+          _canCancel: o.status === 'audit',
         };
       });
       this.setData({ list, loaded: true });
@@ -117,11 +117,12 @@ Page({
   },
   async onAction(e) {
     const { id, key } = e.currentTarget.dataset;
-    // 免押/付押金入口先过实名（与 onCredit 一致），其余动作直接跳详情页自处理
+    // 免押入口先过实名，其余动作直接跳详情页自处理
     if (key === 'credit') {
       const ok = await requireRealName();
       if (!ok) return;
     }
-    my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + (key === 'credit' ? '&credit=1' : '') });
+    const suffix = key === 'credit' ? '&credit=1' : '';
+    my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + suffix });
   },
 });

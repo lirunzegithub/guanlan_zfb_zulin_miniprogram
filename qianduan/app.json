@@ -10,6 +10,7 @@
     "pages/order-detail/order-detail",
     "pages/refund-apply/refund-apply",
     "pages/product/product",
+    "pages/order-confirm/order-confirm",
     "pages/info/info",
     "pages/addresses/addresses",
     "pages/address-edit/address-edit",

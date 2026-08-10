@@ -118,22 +118,11 @@
       </div>
 
       <div class="form-field">
-        <label class="form-label">押金冻结模式</label>
-        <div class="seg-row">
-          <label class="seg">
-            <input type="radio" :value="true" v-model="form.freeze_includes_rent" />
-            <span>押金 + 租金（合并冻结）</span>
-          </label>
-          <label class="seg">
-            <input type="radio" :value="false" v-model="form.freeze_includes_rent" />
-            <span>仅押金</span>
-          </label>
-        </div>
+        <label class="form-label">收款与免押模式</label>
+        <div><b>押金 + 租金一次综合授权</b></div>
         <div class="form-hint">
-          决定下单时调支付宝 freeze 的冻结金额组成：<br>
-          ・<b>押金 + 租金</b>：合并冻结一次到位，归还核验时可走"扣后解冻剩余"扣实际租金<br>
-          ・<b>仅押金</b>：只冻押金作担保，租金到期再单独扣<br>
-          注：仅影响<b>新下单</b>；已下单订单按下单时快照（freeze_amount 字段）执行。
+          用户只进行一次支付宝验证；授权成功后，系统立即把租金转为实际支付，剩余押金额度继续担保。<br>
+          历史订单仍按它们下单时的 freeze_amount 快照执行，不会被改写。
         </div>
         <a class="link-out" href="https://opendocs.alipay.com/open/064jhe" target="_blank" rel="noopener noreferrer">
           支付宝官方文档：线上资金授权冻结接口（freeze） ↗
@@ -247,6 +236,141 @@
         </div>
       </div>
 
+      <!-- ============ 顺丰物流对接（整块可选，不填不影响任何现有功能） ============ -->
+      <div class="form-section optional">
+        <div class="fs-head">
+          <div class="fs-title">
+            顺丰物流对接
+            <span class="fs-badge">可选</span>
+            <span v-if="sfConfigured" class="fs-state on">已启用</span>
+            <span v-else class="fs-state off">未对接</span>
+          </div>
+          <div class="fs-desc">
+            <b>这一整块都是选填的，留空不影响下单、收款、发货、押金的任何环节。</b>
+            它只用来做两件事：
+            <ol>
+              <li><b>订单物流查询</b>——后台订单里能看到顺丰的真实轨迹与签收时间，不用再去顺丰官网逐单查</li>
+              <li><b>「待收货 → 租赁中」的判定</b>——用真实签收事件驱动状态跳变，
+                  取代「发货时间 + 物流免租期」的估算。签收早于约定物流期时，归还日按真实签收相应提前
+                  （<b>用机天数不变、金额不变、已冻结的押金不动</b>）</li>
+            </ol>
+            <b>不填、或顺丰接口查不到时，一律回落到原本的定时器逻辑</b>，到点照常转「租赁中」，
+            订单不会卡在「待收货」。所以这块出任何问题都不会影响正常经营。
+          </div>
+        </div>
+
+        <div class="fs-body">
+          <div class="form-field">
+            <label class="form-label">丰桥顾客编码</label>
+            <input class="input mono" type="text" v-model.trim="form.sf_partner_id" placeholder="丰桥开放平台申请后获得的 partnerID" />
+            <div class="form-hint">
+              注意是<b>丰桥顾客编码（partnerID）</b>，不是月结卡号，两者不是一回事。
+              月结卡号<b>不需要在这里填</b>——权限是靠顾客编码在丰桥后台绑定卡号来授予的，
+              名下有几个卡号都只填这一份凭据。
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label class="form-label">丰桥校验码</label>
+            <input class="input mono" type="password" v-model.trim="form.sf_check_word" placeholder="与顾客编码配对的 checkWord" />
+            <div class="form-hint">
+              只在本机参与签名计算，不会发送给顺丰以外的任何一方。
+              <b>与顾客编码两者都填齐才算启用</b>，任一留空即视为未对接。
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label class="form-label">运行环境</label>
+            <div class="seg-row">
+              <label class="seg">
+                <input type="radio" :value="false" v-model="form.sf_sandbox" />
+                <span>生产（默认）</span>
+              </label>
+              <label class="seg">
+                <input type="radio" :value="true" v-model="form.sf_sandbox" />
+                <span>沙箱（联调）</span>
+              </label>
+            </div>
+            <div class="form-hint">
+              沙箱与生产的凭据<b>不通用</b>，切换环境必须同时换上面两项。
+              沙箱只回固定的模拟轨迹，<b>不能用来验证真实订单</b>，联调完务必切回生产。
+            </div>
+          </div>
+        </div>
+
+      <!-- ===== 顺丰对接自检 ===== -->
+      <div class="selfcheck">
+        <div class="sc-head">
+          <div>
+            <div class="sc-title">
+              顺丰对接测试
+              <span v-if="sf.result" :class="['sc-badge', 'sc-'+sf.result.summary.overall]">
+                {{ overallLabel(sf.result.summary.overall) }}
+              </span>
+            </div>
+            <div class="sc-desc">
+              一次验三件事：能否连上顺丰网关、顾客编码与校验码对不对、路由查询接口权限是否已开通。
+              填了运单号还会把「签收判定」一起跑一遍，直接看出这个单会不会被判成已签收。仅只读诊断，不改配置、不碰订单。
+              <br>
+              测试固定<b>先不带手机号</b>查一次，顺带验证「月结单是否免手机号校验」——这条决定能否改成批量查询、把请求量降一个量级。
+              只有在不带手机号查不到时，才会用你填的手机号再打一次做对照。<b>沙箱不校验手机号，此结论只在生产环境才作数。</b>
+            </div>
+          </div>
+          <div class="row" style="gap:8px; align-items:flex-start">
+            <div>
+              <input class="input mono" style="width:190px" v-model.trim="sf.waybill"
+                     placeholder="运单号（选填）" @keyup.enter="runSfCheck" />
+              <input class="input mono" style="width:190px; margin-top:6px" v-model.trim="sf.phone"
+                     placeholder="收件人手机后四位（选填）" @keyup.enter="runSfCheck" />
+            </div>
+            <button class="btn" :disabled="sf.running" @click="runSfCheck">
+              {{ sf.running ? '测试中…' : '测试连接' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="sf.error" class="sc-err">{{ sf.error }}</div>
+
+        <template v-if="sf.result">
+          <div class="sc-summary">
+            顾客编码 <code>{{ sf.result.summary.partner_id || '未配置' }}</code>
+            · 环境 <code>{{ sf.result.summary.sandbox ? '沙箱' : '生产' }}</code>
+            <template v-if="sf.result.summary.waybill_no">
+              · 测试运单 <code>{{ sf.result.summary.waybill_no }}</code>
+              <span v-if="sf.result.summary.probed_with_placeholder" class="muted">（占位号，仅探连通性）</span>
+              <span v-if="sf.result.summary.phone_used" class="muted">（已带手机号重试）</span>
+            </template>
+            · 通过 {{ sf.result.summary.ok }} / 警告 {{ sf.result.summary.warn }} / 失败 {{ sf.result.summary.fail }}
+          </div>
+
+          <ul class="sc-list">
+            <li v-for="it in sf.result.items" :key="it.key" :class="'sc-'+it.status">
+              <span class="sc-ico">{{ statusIco(it.status) }}</span>
+              <div class="sc-body">
+                <div class="sc-label">{{ it.label }}</div>
+                <div v-if="it.detail" class="sc-detail">{{ it.detail }}</div>
+                <div v-if="it.hint" class="sc-hint">建议：{{ it.hint }}</div>
+              </div>
+            </li>
+          </ul>
+
+          <div v-if="sf.result.routes.length" class="sc-fp">
+            <div class="sc-fp-title">
+              最近 {{ sf.result.routes.length }} 条轨迹（✅ 标记的那条即判定为签收的依据）
+            </div>
+            <div v-for="(r, i) in sf.result.routes" :key="i" class="sf-route">
+              <span class="sf-mark">{{ r.signed ? '✅' : '·' }}</span>
+              <code class="sf-time">{{ r.time }}</code>
+              <span class="sf-st">{{ r.status }}</span>
+              <code class="sf-code">op={{ r.op }} first={{ r.first }}</code>
+              <span class="sf-remark">{{ r.remark }}</span>
+            </div>
+          </div>
+        </template>
+        </div>
+      </div>
+      <!-- ============ 顺丰物流对接 结束 ============ -->
+
       <div class="form-field danger">
         <label class="form-label">公网域名（图片 / 支付宝回调）</label>
         <input class="input mono" type="text" v-model.trim="form.notify_base" placeholder="如 https://your-domain.com" />
@@ -341,6 +465,9 @@ export default {
       min_price_floor:        20,
       inventory_api_token:    '',
       ship_huohao_required:   false,
+      sf_partner_id:          '',
+      sf_check_word:          '',
+      sf_sandbox:             false,
     });
     const msg = ref(null);
     const logoUploading = ref(false);
@@ -358,6 +485,28 @@ export default {
         sc.running = false;
       }
     };
+    // 顺丰是否已启用：两项凭据都填齐才算，与后端 sf_client.is_configured() 同口径
+    const sfConfigured = computed(() =>
+      !!(form.sf_partner_id || '').trim() && !!(form.sf_check_word || '').trim()
+    );
+
+    // ── 顺丰对接自检 ──
+    // 用刚保存的配置去打顺丰，所以有未保存改动时先提醒——否则会拿旧凭据测出
+    // 一个和眼前表单无关的结果，最容易让人误判成"填对了但还是不通"
+    const sf = reactive({ running: false, waybill: '', phone: '', result: null, error: '' });
+    const runSfCheck = async () => {
+      if (dirty.value && !confirm('顺丰测试用的是「已保存」的配置，当前有未保存的改动。\n继续测试？（建议先保存再测）')) return;
+      sf.running = true;
+      sf.error = '';
+      try {
+        sf.result = await api.sfSelfcheck(sf.waybill, sf.phone);
+      } catch (e) {
+        sf.error = e.message || '测试失败';
+      } finally {
+        sf.running = false;
+      }
+    };
+
     const statusIco = (s) => ({ ok: '✅', warn: '⚠️', fail: '❌' }[s] || '•');
     const overallLabel = (s) => ({ ok: '全部通过', warn: '有警告', fail: '存在异常' }[s] || s);
 
@@ -439,7 +588,8 @@ export default {
 
     onMounted(reload);
     return { auth, isAdmin, loading, saving, form, dirty, msg, reload, save, logoUploading, onLogoPick, absUrl,
-             sc, runSelfcheck, statusIco, overallLabel };
+             sc, runSelfcheck, statusIco, overallLabel,
+             sf, runSfCheck, sfConfigured };
   },
 };
 </script>
@@ -578,6 +728,37 @@ export default {
 .sc-fp-row { display: flex; gap: 10px; font-size: 12px; margin: 3px 0; }
 .sc-fp-row span { color: #6b7280; width: 72px; flex-shrink: 0; }
 .sc-fp-row code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #1a1f2e; word-break: break-all; }
+
+/* ===== 可选功能分组（顺丰对接等）=====
+   用一个带边框的块把整组设置圈起来，配上「可选」徽标和启用状态，
+   让运营一眼看出这块不填也没关系，不必逐条读 hint 才敢跳过。 */
+.form-section {
+  border: 1px solid #e5e8ee;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.form-section.optional { border-style: dashed; }
+.fs-head { padding: 14px 16px; background: #fbfcfe; border-bottom: 1px solid #eef1f6; }
+.fs-title { font-size: 15px; font-weight: 600; color: #1a1f2e; display: flex; align-items: center; gap: 8px; }
+.fs-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; font-weight: 500; background: #eef1f6; color: #6b7280; }
+.fs-state { font-size: 11px; padding: 1px 8px; border-radius: 10px; font-weight: 500; }
+.fs-state.on  { background: #e8f7ee; color: #2a7942; }
+.fs-state.off { background: #f3f4f6; color: #9aa3b2; }
+.fs-desc { font-size: 12px; color: #6b7280; line-height: 1.6; margin-top: 8px; }
+.fs-desc ol { margin: 6px 0; padding-left: 18px; }
+.fs-desc li { margin: 3px 0; }
+.fs-body { padding: 16px; display: flex; flex-direction: column; gap: 20px; }
+/* 分组内的自检卡片：底色改白，避免与 .fs-head 的浅灰糊成一片 */
+.form-section .selfcheck { margin: 0 16px 16px; background: #fff; }
+
+/* ===== 顺丰自检的轨迹列表 ===== */
+.sf-route { display: flex; gap: 8px; font-size: 11px; padding: 3px 0; align-items: baseline; border-top: 1px solid #f0f2f6; }
+.sf-route:first-of-type { border-top: none; }
+.sf-mark { width: 14px; flex-shrink: 0; }
+.sf-time { font-family: ui-monospace, Menlo, monospace; color: #4b5563; flex-shrink: 0; }
+.sf-st { color: #1a1f2e; font-weight: 500; width: 52px; flex-shrink: 0; }
+.sf-code { font-family: ui-monospace, Menlo, monospace; color: #9aa3b2; flex-shrink: 0; }
+.sf-remark { color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .toast {
   position: fixed;

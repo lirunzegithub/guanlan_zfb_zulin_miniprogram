@@ -18,7 +18,7 @@ import time
 from app.alipay_client import get_client
 from app.config import AlipayConfig
 from app.notify_log import record as notify_record
-from app.storage.repos import order_repo, product_repo
+from app.storage.repos import order_repo, product_repo, sku_repo
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,8 @@ def _build_business_info(order: dict) -> dict:
         "first_rent":     f"{amount:.2f}",
         "payment_amount": f"{amount:.2f}",
     }
+    if order.get("renewed_at"):
+        info["real_date"] = time.strftime("%Y-%m-%d", time.localtime(int(order["renewed_at"])))
     if order.get("shipped_at"):
         info["delivery_time"] = _fmt_time(order["shipped_at"])
     # 收货时间：SERVICE_MSG（订单消息）场景必填——之前没拼这个字段，
@@ -110,17 +112,42 @@ def _build_business_info(order: dict) -> dict:
     return info
 
 
-def _product_info(pid) -> tuple[str, str]:
-    """返回 (商品名, image_material_id)。material_id 没上传过则空串占位。"""
+def _item_info(order: dict) -> tuple[str, str]:
+    """返回 (同步给支付宝的商品名, image_material_id)。material_id 没上传过则空串占位。
+
+    有 SKU 的订单：支付宝订单中心只有一个商品名字段，所以把 SKU 名拼进去
+    （"XX相机 128G 深空灰"），否则用户在支付宝端看不出租的是哪一个。
+    素材图优先用 SKU 自己的，没配独立图时回落商品主图。
+    """
+    pid = order.get("product_id")
     if not pid:
         return "租赁商品", ""
     p = product_repo.get(pid) or {}
     name = p.get("name") or "租赁商品"
     material_id = (p.get("alipay_image_material_id") or "").strip()
+
+    if int(order.get("sku_id") or 0):
+        sku_name = (order.get("sku_name") or "").strip()
+        if sku_name:
+            name = f"{name} {sku_name}"
+        s = sku_repo.get(order["sku_id"]) or {}
+        material_id = (s.get("alipay_image_material_id") or "").strip() or material_id
     return name, material_id
 
 
-def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
+# 订单消息（SERVICE_MSG）等分发场景返回的"提示型"原因：主接口已经 code=10000、
+# 订单中心状态已更新，只是那条消息没派发出去——不是同步失败。
+# 早先任何 not_distribute_reason 都判失败，导致后台一片红色"同步失败"，真正的失败
+# （如状态乱序 INVALID_PARAMETER）反而被淹没。这类原因改记 sync_warn，不影响 sync_ok。
+_BENIGN_DISTRIBUTE_HINTS = (
+    "无需处理",      # 该订单状态未配置消息，无需处理
+    "不支持分发",    # 该订单用户未授权，不支持分发
+    "未配置",        # 该订单状态未配置消息
+    "未授权",        # 用户没订阅/授权消息
+)
+
+
+def sync_order(oid: str, *, reason: str = "", status_override: str = "") -> tuple[bool, str]:
     """把订单当前状态同步到支付宝订单中心。
     成功：(True, "")；失败：(False, err_msg)。一律落 notify_log + 写回订单 sync_*。
     """
@@ -141,7 +168,7 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
             note=f"skipped: {internal} 为内部中间态 ({reason or 'manual'})",
         )
         return True, ""
-    alipay_status = _STATUS_MAP.get(internal)
+    alipay_status = status_override or _STATUS_MAP.get(internal)
     if not alipay_status:
         return False, f"无法映射内部状态 '{internal}'"
 
@@ -149,13 +176,14 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
     if not buyer_id:
         return False, "订单缺少 user_id（支付宝 buyer_id）"
 
-    product_name, material_id = _product_info(order.get("product_id"))
+    product_name, material_id = _item_info(order)
     business_info = _build_business_info(order)
     link_page = f"/pages/order-detail/order-detail?id={oid}"
 
     err_msg = ""
     api_ok = False        # 顶层 API 调用是否返回 code=10000
-    distribute_warnings: list[str] = []
+    distribute_warnings: list[str] = []   # 真正需要运营处理的分发失败
+    distribute_notes: list[str] = []      # 提示型，不算失败（见 _BENIGN_DISTRIBUTE_HINTS）
     resp: dict = {}
     try:
         resp = get_client().merchant_order_sync(
@@ -188,30 +216,39 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
             if not reason_text:
                 continue
             scene = d.get("scene_name") or d.get("scene_code") or "未知场景"
-            distribute_warnings.append(f"{scene}: {reason_text}")
+            line = f"{scene}: {reason_text}"
+            if any(h in reason_text for h in _BENIGN_DISTRIBUTE_HINTS):
+                distribute_notes.append(line)
+            else:
+                distribute_warnings.append(line)
 
     partial = bool(distribute_warnings)
     if partial:
         err_msg = "分发部分失败 - " + " / ".join(distribute_warnings)
         logger.warning("merchant_order_sync partial-fail oid=%s: %s", oid, err_msg)
 
-    # 最终业务态：API 通过且无分发告警才算完全成功
+    # 最终业务态：API 通过且无"真"分发告警才算成功；提示型原因不降级
     business_ok = api_ok and not partial
+    warn_msg = " / ".join(distribute_notes)
 
     # 写订单 sync_* 字段（运营在后台一眼看到同步状态）。
     # 即使分发告警，sync_status 依然写入（阿里订单中心已经更新），
     # 但 sync_ok=False 让前端「重试同步」按钮可点。
+    # sync_warn 是"同步成功，但有支付宝的提示"，前端按提示样式展示，不算失败。
     order_repo.update(oid, {
         "sync_status": alipay_status if api_ok else order.get("sync_status") or "",
         "sync_ok":     business_ok,
         "sync_at":     int(time.time()),
         "sync_err":    "" if business_ok else err_msg[:500],
+        "sync_warn":   warn_msg[:500] if api_ok else "",
     })
 
     if not api_ok:
         note_tail = f" - {err_msg[:160]}"
     elif partial:
         note_tail = f" - WARN {err_msg[:160]}"
+    elif warn_msg:
+        note_tail = f" - NOTE {warn_msg[:160]}"
     else:
         note_tail = ""
 
@@ -227,6 +264,7 @@ def sync_order(oid: str, *, reason: str = "") -> tuple[bool, str]:
             "resp":           resp if api_ok else None,
             "err":            err_msg if not business_ok else "",
             "distribute_warnings": distribute_warnings,
+            "distribute_notes":    distribute_notes,
         },
         verified=api_ok,            # 验签 / 顶层接口校验：与之前语义一致
         business_ok=business_ok,    # 业务层：分发告警时降级为 False

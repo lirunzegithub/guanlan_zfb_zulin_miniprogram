@@ -62,6 +62,15 @@ def _log_notify(channel: str, params: dict, verified: bool, business_ok: bool, e
 # 比对。支付宝 alipay.user.certify.open.* 本身就闭环负责实人核验
 # （人脸 ↔ 身份证照片 ↔ 公安库），不需要前置比对。
 
+# certify_id 在支付宝侧的存活规则（务必跟"认证通过后 3 个月免重复 KYC"区分开，
+# 后者说的是认证**结果**可复用，不是这个 id 还能再唤起一次人脸）：
+#   · initialize 之后一直没认证 → 23 小时有效，超时作废
+#   · 一旦走完一次认证（通过或失败）→ 该 id 即被消费，不能再次唤起
+# 拿作废/已消费的 id 去 certify.open 生成 URL，唤起时支付宝端会直接落到
+# 「身份验证失败 - 人气大爆发，一会再试试」兜底页。这里留 1 小时余量，
+# 避免卡在过期边界上把废 id 发给前端。
+CERTIFY_ID_TTL = 22 * 3600
+
 
 @bp.post("/certify/init")
 def certify_init():
@@ -69,10 +78,10 @@ def certify_init():
 
     返回 certify_id 给前端，前端调 my.startAPVerify({certifyId}) 唤起活体页。
 
-    复用策略：
-      - 同一 user 行如果有 last_certify_id 且 < 3 个月 → 直接复用，**不再调 init**，
-        省一次 KYC 费用。
-      - 23 小时未认证窗口里复用也安全（支付宝侧 certify_id 在此期间有效）。
+    复用策略（见上方 CERTIFY_ID_TTL 注释）：
+      - 仅当旧 certify_id **没被消费过**且仍在 23 小时窗口内才复用，省一次 KYC 费用。
+        典型场景：用户上次拿到 id 后取消了 / 中途退出，压根没走完认证。
+      - 认证跑完一次（certify/query 拿到结论）就标记已消费，下次必定重新 init。
       - 用户重新提交不同姓名/身份证 → 强制重新 init（cert_no 跟 init 时绑定）。
     """
     body = request.get_json(silent=True) or {}
@@ -87,9 +96,11 @@ def certify_init():
     old_at    = int(u.get("last_certify_at") or 0)
     old_name  = (u.get("real_name") or "").strip()
     old_card  = (u.get("id_card") or "").strip()
-    # 复用条件：身份信息没变 + 3 个月内 (90 天)
+    # 老数据没有 last_certify_used 字段，无从判断是否已消费 → 保守当作已消费
+    old_used  = u.get("last_certify_used", True)
+    # 复用条件：身份信息没变 + 旧 id 未被消费 + 还在 23 小时有效期内
     reusable = (old_id and old_name == name and old_card == id_card
-                and (now - old_at) < 90 * 24 * 3600)
+                and not old_used and (now - old_at) < CERTIFY_ID_TTL)
 
     client = get_client()
 
@@ -126,10 +137,11 @@ def certify_init():
         return fail(20014, f"调用支付宝失败（certify.open）：{e}")
 
     update_current_user({
-        "real_name":       name,
-        "id_card":         id_card,
-        "last_certify_id": certify_id,
-        "last_certify_at": now,
+        "real_name":         name,
+        "id_card":           id_card,
+        "last_certify_id":   certify_id,
+        "last_certify_at":   now,
+        "last_certify_used": False,     # 刚建的 id，还没被任何一次认证消费
     })
 
     return ok({
@@ -154,9 +166,15 @@ def certify_query():
     except Exception as e:
         return fail(20022, f"调用支付宝失败：{e}")
 
+    # query 能拿到结论 = 用户确实走完了一次认证 → 这个 certify_id 已被支付宝消费掉，
+    # 不能再唤起第二次；标记后下次 certify_init 会强制重新 initialize。
+    patch = {}
+    if (current_user().get("last_certify_id") or "").strip() == certify_id:
+        patch["last_certify_used"] = True
     if res.get("passed"):
-        patch = {"verified": True}
+        patch["verified"] = True
         if body.get("phone"): patch["phone"] = body["phone"]
+    if patch:
         update_current_user(patch)
     return ok({
         "certify_id":  certify_id,
@@ -319,6 +337,44 @@ def is_frozen(res: dict) -> bool:
     return (res.get("status") or "").upper() in ("AUTHORIZED", "FROZEN")
 
 
+def freeze_confirmed(order: dict) -> bool:
+    """这单的押金是否**确实**冻结成功过——"能不能发货"的唯一依据。
+
+    绝不能拿 alipay_auth_no 当代理指标：授权单一创建就有 auth_no（用户刚点开
+    收银台、order_status=INIT、冻结 ¥0 时查询就能拿到），而 credit_query 为了
+    解冻兜底会把它无条件落库。曾经据此判定"押金已冻结"，把一笔从未授权成功的
+    0 元租金单一路推进到待发货并扣了库存（O6E5AB9BC2F15，2026-08-03）。
+
+    freeze_succeeded_at 只在两种确凿证据下写入（见 mark_freeze_success）：
+      - auth_order_query 返回 AUTHORIZED/FROZEN（is_frozen 为真）
+      - freeze 异步通知 status=SUCCESS/FROZEN，且属于当前生效授权号
+    """
+    if order.get("freeze_succeeded_at"):
+        return True
+    # 老数据兜底：本字段上线前的订单没有它。已经履约到 audit 之后的订单当年也是
+    # 走同一套 is_frozen/SUCCESS 判定推进的，不能因为字段缺失就集体判"未冻结"
+    # （会误杀上百笔在租订单的押金授权倒计时）。operation_id 只由冻结通知写入。
+    # audit 阶段不吃这个兜底，从严——待发货之前的判定必须有确凿证据。
+    if (order.get("status") or "") in ("audit", "cancelled"):
+        return False
+    return bool((order.get("alipay_operation_id") or "").strip())
+
+
+def mark_freeze_success(oid: str, order: dict | None = None) -> None:
+    """落"押金确实冻住了"的时间戳，幂等。
+
+    唯一写入口。调用方必须已经拿到确凿证据（is_frozen 为真 / 通知 SUCCESS），
+    不要为了"让订单能往下走"在别处补写这个字段。
+    """
+    from app.storage.repos import order_repo
+    if not oid:
+        return
+    o = order if order is not None else order_repo.get(oid)
+    if not o or o.get("freeze_succeeded_at"):
+        return
+    order_repo.update(oid, {"freeze_succeeded_at": int(time.time())})
+
+
 def dispatch_auto_unfreeze(order: dict, auth_no: str, amount: float, reason: str) -> bool:
     """对"已取消却冻结成功"的订单自动下发解冻，资金原路退回用户。
 
@@ -400,7 +456,8 @@ def _record_orphan_freeze(order: dict, params: dict) -> None:
 @bp.post("/credit/query")
 def credit_query():
     """查询授权订单状态：alipay.fund.auth.order.query
-    若已 FROZEN/AUTHORIZED，自动把对应订单从 audit 推进到 send（免押成功后直接进发货流程）
+    若已 FROZEN/AUTHORIZED，首次发现时尝试收取首期租金并推进到 send；
+    首次收租失败后这里只查询状态，不会因用户刷新而再次扣款。
     """
     body = request.get_json(silent=True) or {}
     order_id = body.get("out_order_no")        # 前端传裸订单号
@@ -426,10 +483,14 @@ def credit_query():
     # 主动查询是异步 notify 的兜底，查到的 auth_no 必须同样落库：
     # 授权号若只靠 freeze 通知写入，通知不可达（本地联调）或丢失时订单会一直
     # 没有授权号，后续取消/归还会被误判成"未冻结押金"而漏发解冻。
+    # 注意：这里写的号**不代表冻结成功**——授权单 INIT（用户还没授权、冻结 ¥0）
+    # 也查得到 auth_no。判断"钱冻着"一律走 is_frozen / freeze_confirmed。
     if _order and res.get("auth_no") and not (_order.get("alipay_auth_no") or "").strip():
         order_repo.update(order_id, {"alipay_auth_no": res["auth_no"]})
 
     if is_frozen(res):
+        if _order:
+            mark_freeze_success(order_id, _order)
         if _order and _order.get("status") == "cancelled":
             # 取消撞上付款成功（用户付款途中取消 / 超时清理竞态）：
             # 订单已取消但钱冻着，自动解冻原路退回，不再静默悬挂
@@ -441,7 +502,14 @@ def credit_query():
             )
         else:
             from app.routes.orders import transition_freeze_done
-            transition_freeze_done(order_id)   # 用裸订单号推进状态机
+            transition_freeze_done(order_id)   # 综合授权 → 自动收租金 → 待发货
+    latest = order_repo.get(order_id) if _order else None
+    if latest:
+        res["order_status"] = latest.get("status") or ""
+        res["rent_captured"] = bool(latest.get("rent_paid_at"))
+        res["rent_capture_error"] = (
+            latest.get("rent_capture_last_error") or latest.get("rent_payment_error") or ""
+        )
     return ok(res)
 
 
@@ -537,7 +605,9 @@ def notify_auth_freeze():
         is_active = bool(order) and out_order_no == active_oon
 
         if is_active:
-            # 把 auth_no / out_request_no 落库到订单上（detail.query 接口需要）
+            # 把 auth_no / out_request_no 落库到订单上（detail.query 接口需要）。
+            # 与 status 无关：CLOSED（授权关闭）的通知也要落号，否则后续查不到这笔。
+            # 同理它也**不代表冻结成功**，成功标记只在下面 SUCCESS 分支里写。
             patch = {}
             if params.get("auth_no"):        patch["alipay_auth_no"] = params["auth_no"]
             if params.get("out_request_no"): patch["alipay_out_request_no"] = params["out_request_no"]
@@ -557,6 +627,9 @@ def notify_auth_freeze():
                     reason="freeze_after_cancel",
                 )
             else:
+                # 通知已是"冻结成功"的确凿证据，先立字据再推进：transition_freeze_done
+                # 见到 freeze_succeeded_at 就不必再向支付宝查一次。
+                mark_freeze_success(oid, order)
                 transition_freeze_done(out_order_no)  # audit→send；其余状态幂等忽略
         _log_notify("auth_freeze", params, True, True)
         return _NOTIFY_OK
@@ -675,8 +748,12 @@ def notify_trade():
                 if patch:
                     trade_repo.update(out_trade_no, patch)
         if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED"):
-            from app.routes.orders import transition_trade_paid
-            transition_trade_paid(out_trade_no)
+            from app.routes.orders import complete_renewal
+            complete_renewal(
+                out_trade_no,
+                trade_no=params.get("trade_no") or "",
+                raw=dict(params),
+            )
         _log_notify("trade", params, True, True)
         return _NOTIFY_OK
     except Exception as e:

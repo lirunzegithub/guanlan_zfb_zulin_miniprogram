@@ -3,7 +3,8 @@
 接口契约：
   GET    /api/user/addresses              当前用户的地址列表（默认排前）
   GET    /api/user/addresses/<id>         单条
-  POST   /api/user/addresses              新增；body 含 receiver_name / phone / province / city / district / detail / zip_code? / is_default? / source?
+  POST   /api/user/addresses              新增；body 含 receiver_name / phone / province / city / district? / detail
+                                          / province_code? / city_code? / district_code? / zip_code? / is_default? / source?
   PUT    /api/user/addresses/<id>         更新
   DELETE /api/user/addresses/<id>         软删除
   POST   /api/user/addresses/<id>/default 设为默认（自动把其他地址 is_default 置 false）
@@ -16,7 +17,12 @@ from app.current_user import current_user_id as _current_user_id
 
 bp = Blueprint("addresses", __name__)
 
-_REQUIRED = ("receiver_name", "receiver_phone", "province", "city", "district", "detail")
+# district 不在必填里：仙桃、潜江、天门等省直管县级市没有区县层级，
+# 支付宝 my.getAddress 返回的 area 就是空串，强制必填会把这类地址整个挡在门外
+_REQUIRED = ("receiver_name", "receiver_phone", "province", "city", "detail")
+# 三个区划码只在小程序用选择器填地址时带上；getAddress 导入和存量地址没有，一律可选
+_CODES = ("province_code", "city_code", "district_code")
+_EDITABLE = _REQUIRED + ("district", "zip_code", "source") + _CODES
 
 
 def _validate(body: dict) -> str | None:
@@ -25,6 +31,11 @@ def _validate(body: dict) -> str | None:
             return f"{k} 必填"
     if not re.fullmatch(r"1\d{10}", body.get("receiver_phone", "")):
         return "手机号格式错误"
+    for k in _CODES:
+        v = (body.get(k) or "").strip()
+        # 区级允许 9 位：东莞/中山/儋州/嘉峪关不设区，区级位置放的是镇街
+        if v and not (v.isdigit() and len(v) in (6, 9)):
+            return f"{k} 格式错误"
     return None
 
 
@@ -65,7 +76,8 @@ def create_addr():
         "receiver_phone": body["receiver_phone"].strip(),
         "province":       body["province"].strip(),
         "city":           body["city"].strip(),
-        "district":       body["district"].strip(),
+        "district":       (body.get("district") or "").strip(),
+        **{k: (body.get(k) or "").strip() for k in _CODES},
         "detail":         body["detail"].strip(),
         "zip_code":       (body.get("zip_code") or "").strip(),
         "source":         body.get("source") if body.get("source") in ("manual", "alipay") else "manual",
@@ -87,7 +99,7 @@ def update_addr(aid):
     if err:
         return fail(1, err)
     fields = {k: body[k].strip() if isinstance(body.get(k), str) else body[k]
-              for k in _REQUIRED + ("zip_code", "source") if k in body}
+              for k in _EDITABLE if k in body}
     if "is_default" in body:
         fields["is_default"] = bool(body["is_default"])
     updated = address_repo.update(aid, fields)

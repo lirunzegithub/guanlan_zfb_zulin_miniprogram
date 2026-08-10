@@ -4,7 +4,7 @@ import time
 from flask import Blueprint, request, g, has_request_context
 from app.response import ok, fail
 from app.config import AlipayConfig
-from app.storage.repos import product_repo, comment_repo, favorite_repo
+from app.storage.repos import product_repo, sku_repo, comment_repo, favorite_repo
 from app.pricing import (
     normalize_tiers, derive_price_curve, min_unit_price, substitute_zero_tiers,
 )
@@ -74,12 +74,46 @@ def _protect_tiers(tiers: list) -> list:
     return substitute_zero_tiers(tiers, fallback)
 
 
+def _on_sale_skus(pid) -> list[dict]:
+    """该商品在售的 SKU（status=on），按 sort / id 排序（repo.list 已保证）。
+    正常商品恒有至少一个；返回空列表只可能是 SKU 全被下架了。
+    """
+    return [s for s in sku_repo.list(product_id=pid) if (s.get("status") or "on") == "on"]
+
+
+def _sales_of(pid, fallback=0) -> int:
+    """SKU 存在时汇总全部 SKU 的历史销量（包括已下架 SKU）。"""
+    skus = sku_repo.list(product_id=pid)
+    if skus:
+        return sum(int(s.get("sales") or 0) for s in skus)
+    return int(fallback or 0)
+
+
+def _sku_card(s: dict, product_covers: list[str]) -> dict:
+    """SKU 的对外视图：只给小程序渲染和算价需要的字段，租金按 tiers 实时重算。
+    没配独立封面的 SKU 回落商品首图，保证前端切换 SKU 时图不会闪空。
+    """
+    tiers = _protect_tiers(normalize_tiers(s.get("price_tiers") or []))
+    cover = _abs((s.get("cover_url") or "").strip())
+    return {
+        "id":             s.get("id"),
+        "name":           s.get("name") or "",
+        "cover_url":      cover or (product_covers[0] if product_covers else ""),
+        "price_tiers":    tiers,
+        "min_price":      min_unit_price(tiers),
+        "price_curve":    derive_price_curve(tiers),
+        "deposit_amount": float(s.get("deposit_amount") or 0),
+        "stock":          int(s.get("stock") or 0),
+    }
+
+
 def _to_card(p: dict) -> dict:
     card = {k: p.get(k) for k in _LIST_FIELDS}
     covers = _covers_of(p)
     card["covers"] = covers
     card["cover_url"] = covers[0] if covers else ""
     card["bg"] = _bg_of(p)
+    card["sales"] = _sales_of(p.get("id"), p.get("sales"))
     card.pop("cover_bg", None)
     # min_price 按 price_tiers 实时算（与详情口径一致）+ 零价兜底，不用存库旧值。
     raw_tiers = p.get("price_tiers")
@@ -87,6 +121,18 @@ def _to_card(p: dict) -> dict:
         card["min_price"] = min_unit_price(_protect_tiers(normalize_tiers(raw_tiers)))
     else:
         card["min_price"] = p.get("min_price")   # 无 tiers 的极端老数据才退回存库值
+
+    # 列表卡起价 = 所有在售 SKU 里最低的那个（"¥X 起"要名副其实）
+    skus = _on_sale_skus(p.get("id"))
+    if skus:
+        prices = [
+            min_unit_price(_protect_tiers(normalize_tiers(s.get("price_tiers") or [])))
+            for s in skus
+        ]
+        prices = [x for x in prices if x is not None]
+        if prices:
+            card["min_price"] = min(prices)
+    card["sku_count"] = len(skus)
     return card
 
 
@@ -138,13 +184,23 @@ def detail(pid):
     p["price_tiers"] = tiers
     p["min_price"] = min_unit_price(tiers)
     p["price_curve"] = derive_price_curve(tiers)
+
+    # SKU：价格/押金/库存的真相都在这里。商品级同名字段用 SKU 汇总值覆盖，
+    # 这样"已租罄""¥X 起"这类既有判断不用改也正确。
+    p["sku_option_name"] = (p.get("sku_option_name") or "SKU").strip() or "SKU"
+    sku_cards = [_sku_card(s, covers) for s in _on_sale_skus(pid)]
+    p["skus"] = sku_cards
+    p["sales"] = _sales_of(pid, p.get("sales"))
+    if sku_cards:
+        p["stock"] = sum(s["stock"] for s in sku_cards)
+        p["min_price"] = min(s["min_price"] for s in sku_cards)
     p.pop("price", None)
     p.pop("promo_label", None)
     p.pop("activity", None)
     p.pop("discounts", None)       # 已废弃的"满 N 天 X 折"标签
 
     # 权益条统一规整：① 剔除合规违规的"芝麻信用免押金"
-    #                  ② 补齐"18 小时电话客服"，所有商品共用同一组权益，避免逐个改 DB
+    #                  ② 补齐"实时电话客服"，所有商品共用同一组权益，避免逐个改 DB
     raw_rights = p.get("rights") if isinstance(p.get("rights"), list) else []
     rights = [
         r for r in raw_rights
@@ -152,7 +208,12 @@ def detail(pid):
         and "芝麻" not in str((r or {}).get("label") or "")
     ]
     if not any((r or {}).get("key") == "tel" for r in rights):
-        rights.append({"key": "tel", "label": "18 小时电话客服", "icon": "tel"})
+        rights.append({"key": "tel", "label": "实时电话客服", "icon": "tel"})
+    else:
+        # 历史 DB 里存的是"18 小时电话客服"，统一改口径，免得逐条改数据
+        for r in rights:
+            if (r or {}).get("key") == "tel":
+                r["label"] = "实时电话客服"
     p["rights"] = rights
 
     # 评论从独立 comments 表查最新若干条嵌进来，保留旧的 p.comments 字段形态

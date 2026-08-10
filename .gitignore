@@ -22,6 +22,8 @@ houdan/data/*.db-shm
 houdan/data/*.db-wal
 houdan/data/*.json
 houdan/data/*.json.migrated
+# 例外：行政区划码表是静态资源（scripts/build_regions.py 生成），需要入库随代码部署
+!houdan/data/regions.json
 # 用户上传的素材
 houdan/static/products/uploads/
 

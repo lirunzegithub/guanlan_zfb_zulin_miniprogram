@@ -4,7 +4,7 @@
 
   <!-- 用户信息 -->
   <view class="user">
-    <image a:if="{{logoUrl}}" class="avatar avatar-img" src="{{logoUrl}}" mode="aspectFill" />
+    <view a:if="{{logoUrl}}" class="avatar avatar-img"><smart-image style="display:block;width:100%;height:100%" src="{{logoUrl}}" mode="aspectFill" /></view>
     <view a:else class="avatar"></view>
     <view class="u-info">
       <view class="u-name">{{displayName}}</view>
@@ -40,7 +40,7 @@
     <block a:for="{{activeOrders}}" a:key="id">
       <view class="ao-card" data-id="{{item.id}}" onTap="onOrderDetail">
         <view class="ao-thumb">
-          <image a:if="{{item.product_cover}}" class="ao-thumb-img" src="{{item.product_cover}}" mode="aspectFill" />
+          <view a:if="{{item.product_cover}}" class="ao-thumb-img"><smart-image style="display:block;width:100%;height:100%" src="{{item.product_cover}}" mode="aspectFill" /></view>
           <view a:else class="ao-thumb-fallback">{{item._shortName}}</view>
         </view>
         <view class="ao-info">

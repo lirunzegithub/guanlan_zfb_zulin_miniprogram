@@ -11,6 +11,7 @@ from app.routes.banners import bp as banners_bp
 from app.routes.orders import bp as orders_bp
 from app.routes.user import bp as user_bp
 from app.routes.addresses import bp as addresses_bp
+from app.routes.regions import bp as regions_bp
 from app.routes.service import bp as service_bp
 from app.routes.alipay import bp as alipay_bp
 from app.routes.landing import bp as landing_bp
@@ -43,6 +44,7 @@ _AUTH_EXEMPT_PREFIX: tuple[tuple[str, str], ...] = (
     ("GET",  "/api/share/products/"),  # 分享卡片可被未登录用户预览
     ("GET",  "/api/share/stats/"),
     ("GET",  "/api/coupons"),          # 公开优惠券列表
+    ("GET",  "/api/regions"),          # 行政区划码表：静态资源，公开可缓存
 )
 
 
@@ -94,6 +96,7 @@ def create_app():
     app.register_blueprint(orders_bp,     url_prefix="/api/orders")
     app.register_blueprint(user_bp,       url_prefix="/api/user")
     app.register_blueprint(addresses_bp,  url_prefix="/api/user/addresses")
+    app.register_blueprint(regions_bp,    url_prefix="/api/regions")
     app.register_blueprint(service_bp,    url_prefix="/api/service")
     app.register_blueprint(alipay_bp,     url_prefix="/api/alipay")
     app.register_blueprint(landing_bp,    url_prefix="/product")

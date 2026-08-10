@@ -1,5 +1,6 @@
 {
   "defaultTitle": "订单详情",
-  "titleBarColor": "#2b7cff",
-  "backgroundColor": "#2b7cff"
+  "titleBarColor": "#ffffff",
+  "backgroundColor": "#f4f7fb",
+  "usingComponents": { "smart-image": "/components/smart-image/smart-image" }
 }

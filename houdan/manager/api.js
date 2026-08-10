@@ -42,12 +42,23 @@ export const api = {
   // 仪表盘
   stats:    () => http.get('/stats'),
 
+  // 统计中心
+  statsCenter: () => http.get('/stats/center'),
+
   // 通用 CRUD
   list:     (res, params)          => http.get(`/${res}`, params ? { params } : undefined),
   get:      (res, id)              => http.get(`/${res}/${id}`),
-  create:   (res, body)            => http.post(`/${res}`, body),
+  create:   (res, body, params)    => http.post(`/${res}`, body, params ? { params } : undefined),
   update:   (res, id, body)        => http.put(`/${res}/${id}`, body),
   remove:   (res, id, params)      => http.delete(`/${res}/${id}`, params ? { params } : undefined),
+
+  // 型号（SKU）：挂在商品下的子资源
+  listSkus:   (pid)        => http.get(`/products/${pid}/skus`),
+  createSku:  (pid, body)  => http.post(`/products/${pid}/skus`, body),
+  updateSku:  (sid, body)  => http.put(`/skus/${sid}`, body),
+  removeSku:  (sid)        => http.delete(`/skus/${sid}`),
+  // 整个顺序一次性提交（ids 为拖拽后的完整有序 id 列表），小程序端按此顺序展示
+  reorderSkus:(pid, ids)   => http.post(`/products/${pid}/skus/reorder`, { ids }),
 
   // 通知日志
   notifyLogs: (params = {}) => http.get('/notify-logs', { params }),
@@ -64,12 +75,23 @@ export const api = {
   couriers: () => http.get('/logistics/couriers'),
   // 提交发货：{logistics_no, logistics_company?, huohao?}
   shipOrder: (oid, body) => http.post(`/orders/${oid}/ship`, body),
+  // 订单物流轨迹（后端按订单缓存；force=true 才回源打顺丰）
+  orderLogistics: (oid, force = false) =>
+    http.get(`/orders/${oid}/logistics`, force ? { params: { refresh: 1 } } : undefined),
   // 光影库存系统：按货号查商品卡片（服务端代理）
   inventoryItem: (huohao) => http.get('/inventory/item', { params: { huohao } }),
+  // 光影库存系统：按货号数组批量查卡片（含派生平台/备注），供列表/详情渲染后异步补数
+  inventoryCards: (huohaos) => http.post('/inventory/cards', { huohaos }),
   // 非敏感 UI 标志（货号必填开关、库存对接是否已配置），operator 可读
   uiConfig: () => http.get('/ui-config'),
   // 重试支付宝商家订单同步（alipay.merchant.order.sync）
   resyncOrder: (oid) => http.post(`/orders/${oid}/sync`),
+  // 客服联系客户并确认后，人工重试首期租金；成功即 audit → send
+  retryRentCapture: (oid) => http.post(`/orders/${oid}/rent/retry`, {
+    customer_contact_confirmed: true,
+  }),
+  // 押金已解冻后只重试租金退款，不会重复解冻
+  retryCancelRefund: (oid) => http.post(`/orders/${oid}/cancel-refund/retry`),
   // 用户取消申请审核（pending_cancel 状态专用）
   approveOrderCancel: (oid) => http.post(`/orders/${oid}/cancel-approve`),
   rejectOrderCancel:  (oid, reason = '') => http.post(`/orders/${oid}/cancel-reject`, { reason }),
@@ -84,6 +106,7 @@ export const api = {
   // 订单备注（仅工作人员可见的独立审计日志）
   listOrderNotes: (oid) => http.get(`/orders/${oid}/notes`),
   addOrderNote:   (oid, content) => http.post(`/orders/${oid}/notes`, { content }),
+  listOrderRenewals: (oid) => http.get(`/orders/${oid}/renewals`),
 
   // 预授权扣款（信用免押 方案 A）
   listCharges:   (oid) => http.get(`/orders/${oid}/charges`),
@@ -113,6 +136,16 @@ export const api = {
   alipaySelfcheck: (probe = true) =>
     http.get('/settings/alipay-selfcheck', { params: { probe: probe ? 1 : 0 } }),
 
+  // 顺丰对接自检（只读诊断）。运单号选填，填了会连签收判定一起验；
+  // 手机号后四位更是选填，只在不带它查不到时才用来做对照（判定能否批量查询）
+  sfSelfcheck: (waybillNo = '', checkPhone = '') => {
+    const params = {};
+    if (waybillNo)  params.waybill_no  = waybillNo;
+    if (checkPhone) params.check_phone = checkPhone;
+    return http.get('/settings/sf-selfcheck',
+      Object.keys(params).length ? { params } : undefined);
+  },
+
   // 工作人员密码
   changePassword: (sid, oldPw, newPw) =>
     http.post(`/staffs/${sid}/password`, { old_password: oldPw, new_password: newPw }),
@@ -123,6 +156,9 @@ export const api = {
 
   // 用户收货地址（用户管理编辑弹窗展示）
   userAddresses: (uid) => http.get(`/users/${uid}/addresses`),
+
+  // 明文身份证号：仅 admin，operator 调用会 403
+  userIdCard: (uid) => http.get(`/users/${uid}/id-card`),
 
   // 文件上传：File/Blob → { url, name, size }
   upload: (file) => {

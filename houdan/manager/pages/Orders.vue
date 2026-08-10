@@ -7,9 +7,9 @@
           class="input kw-input"
           v-model.trim="keyword"
           placeholder="订单号 / 商品名 / 收货人 / 用户ID"
-          @keyup.enter="fetch"
+          @keyup.enter="doSearch"
         />
-        <button class="btn btn-ghost btn-sm" @click="fetch">搜索</button>
+        <button class="btn btn-ghost btn-sm" @click="doSearch">搜索</button>
         <button class="btn btn-ghost btn-sm" @click="resetFilter" v-if="keyword || curTab !== 'all'">重置</button>
       </div>
     </div>
@@ -33,9 +33,10 @@
           <th style="width:120px">订单号</th>
           <th style="min-width:240px">商品</th>
           <th style="width:160px">用户</th>
+          <th style="width:70px">年龄</th>
           <th style="width:80px">天数</th>
           <th style="width:110px">下单租金</th>
-          <th style="width:110px">押金</th>
+          <th style="width:130px">押金剩余</th>
           <th style="width:170px">下单时间</th>
           <th style="width:180px">最新备注</th>
           <th style="width:90px">状态</th>
@@ -63,10 +64,16 @@
                 <span v-else class="prod-cover-fallback">无图</span>
               </div>
               <div>
-                <div class="prod-name">{{ o.product_name || `#${o.product_id}` }}</div>
+                <div class="prod-name">
+                  {{ o.product_name || `#${o.product_id}` }}
+                  <span v-if="o.sku_name" class="sku-tag" title="下单时选中的 SKU">{{ o.sku_name }}</span>
+                </div>
                 <div class="muted">¥{{ fmt(o.price_per_day) }} / {{ o.days }} 天</div>
                 <span v-if="o.rent_platform" class="rent-plat" title="租赁平台（来自光影库存）">
                   {{ o.rent_platform }}
+                </span>
+                <span v-if="o.rent_remark" class="rent-remark" title="租赁备注（来自光影库存）">
+                  {{ o.rent_remark }}
                 </span>
               </div>
             </div>
@@ -74,6 +81,10 @@
           <td>
             <div>{{ o.user_real_name || o.user_nickname || '匿名' }}</div>
             <div class="muted">{{ o.user_phone || o.user_id }}</div>
+          </td>
+          <td>
+            <span v-if="o.user_age != null">{{ o.user_age }} 岁</span>
+            <span v-else class="muted" title="该用户未提交身份证信息">-</span>
           </td>
           <td>{{ o.days }}</td>
           <td>
@@ -83,7 +94,10 @@
             </div>
           </td>
           <td>
-            <div>¥{{ fmt(o.deposit_freeze) }}</div>
+            <!-- 显示"现在还冻着多少"而不是下单时冻了多少：扣过款的订单两者不同，
+                 按下单额判断还能扣多少会超额。副行补出原额/已扣、未冻结、已解冻。 -->
+            <div>¥{{ fmt(o.deposit_remaining) }}</div>
+            <div v-if="depositNote(o)" class="muted small">{{ depositNote(o) }}</div>
             <div
               v-if="o.freeze_active"
               :class="['freeze-countdown', { warn: o.freeze_warn, expired: o.freeze_expired }]"
@@ -107,20 +121,35 @@
             <span v-else class="muted">—</span>
           </td>
           <td>
-            <span :class="['tag', statusCls(o.status)]">{{ o.status_label }}</span>
+            <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error || o.cancel_refund_error">{{ o.status_label }}</span>
+            <!-- 已发货/在租却查不到冻结成功凭证：零担保，优先级高于一切状态标签 -->
+            <span v-if="o.freeze_missing" class="tag tag-red" title="订单已进入待发货及之后，但查不到押金冻结成功记录，请立即核实">押金未确认冻结</span>
           </td>
           <td>
             <button class="btn-link" @click="openDetail(o)">详情</button>
+            <button
+              v-if="o.rent_capture_pending"
+              class="btn-link primary"
+              :disabled="retryingRent === o.id"
+              @click="retryRentCapture(o)"
+            >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
+            <button
+              v-if="o.cancel_refund_pending"
+              class="btn-link primary"
+              :disabled="retryingRefund === o.id"
+              @click="retryCancelRefund(o)"
+            >{{ retryingRefund === o.id ? '退款中…' : '重试租金退款' }}</button>
             <button
               v-if="o.status === 'send'"
               class="btn-link primary"
               @click="openShip(o)"
             >发货</button>
-            <template v-if="o.status === 'pending_cancel' && !o.unfreeze_dispatched_at">
+            <template v-if="o.cancel_approval_allowed && !o.unfreeze_dispatched_at">
               <button class="btn-link primary" @click="approveCancel(o)">同意取消</button>
               <button class="btn-link" @click="rejectCancel(o)">驳回</button>
             </template>
-            <span v-else-if="o.status === 'pending_cancel'" class="muted">已下发解冻，待支付宝通知</span>
+            <span v-else-if="o.status === 'pending_cancel' && o.unfreeze_dispatched_at && !o.cancel_refund_pending" class="muted">已下发解冻，待支付宝通知</span>
+            <span v-else-if="o.status === 'pending_cancel' && !o.cancel_approval_allowed" class="muted">取消来源异常，请人工核对</span>
             <template v-if="o.status === 'return_inspecting' && !o.unfreeze_dispatched_at">
               <button class="btn-link primary" @click="approveReturn(o)">核验通过</button>
               <button class="btn-link" @click="rejectReturn(o)">驳回</button>
@@ -140,19 +169,19 @@
             <button class="btn-link danger" @click="remove(o)">删除</button>
           </td>
         </tr>
-        <tr v-if="!loading && !list.length"><td colspan="10" class="empty">暂无订单</td></tr>
-        <tr v-if="loading"><td colspan="10" class="loading">加载中...</td></tr>
+        <tr v-if="!loading && !list.length"><td colspan="11" class="empty">暂无订单</td></tr>
+        <tr v-if="loading && !list.length"><td colspan="11" class="loading">加载中...</td></tr>
       </tbody>
     </table>
 
     <!-- 移动端：卡片式订单列表（与上方表格互斥显示） -->
     <div class="order-cards">
-      <div v-if="loading" class="loading">加载中...</div>
-      <div v-else-if="!list.length" class="empty">暂无订单</div>
+      <div v-if="loading && !list.length" class="loading">加载中...</div>
+      <div v-else-if="!loading && !list.length" class="empty">暂无订单</div>
       <div v-for="o in list" :key="'m-' + o.id" class="order-card">
         <div class="oc-head">
           <span class="oid">{{ o.id }}</span>
-          <span :class="['tag', statusCls(o.status)]">{{ o.status_label }}</span>
+          <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error">{{ o.status_label }}</span>
         </div>
 
         <div class="prod oc-prod">
@@ -182,13 +211,15 @@
           <div class="oc-row">
             <span class="oc-k">用户</span>
             <span>{{ o.user_real_name || o.user_nickname || '匿名' }}
+              <span v-if="o.user_age != null" class="tag tag-gray">{{ o.user_age }} 岁</span>
               <span class="muted">{{ o.user_phone || o.user_id }}</span>
             </span>
           </div>
           <div class="oc-row">
-            <span class="oc-k">押金</span>
+            <span class="oc-k">押金剩余</span>
             <span>
-              ¥{{ fmt(o.deposit_freeze) }}
+              ¥{{ fmt(o.deposit_remaining) }}
+              <span v-if="depositNote(o)" class="muted small">（{{ depositNote(o) }}）</span>
               <span
                 v-if="o.freeze_active"
                 :class="['freeze-countdown', { warn: o.freeze_warn, expired: o.freeze_expired }]"
@@ -226,15 +257,28 @@
         <div class="oc-actions">
           <button class="btn-link" @click="openDetail(o)">详情</button>
           <button
+            v-if="o.rent_capture_pending"
+            class="btn-link primary"
+            :disabled="retryingRent === o.id"
+            @click="retryRentCapture(o)"
+          >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
+          <button
+            v-if="o.cancel_refund_pending"
+            class="btn-link primary"
+            :disabled="retryingRefund === o.id"
+            @click="retryCancelRefund(o)"
+          >{{ retryingRefund === o.id ? '退款中…' : '重试租金退款' }}</button>
+          <button
             v-if="o.status === 'send'"
             class="btn-link primary"
             @click="openShip(o)"
           >发货</button>
-          <template v-if="o.status === 'pending_cancel' && !o.unfreeze_dispatched_at">
+          <template v-if="o.cancel_approval_allowed && !o.unfreeze_dispatched_at">
             <button class="btn-link primary" @click="approveCancel(o)">同意取消</button>
             <button class="btn-link" @click="rejectCancel(o)">驳回</button>
           </template>
-          <span v-else-if="o.status === 'pending_cancel'" class="muted">已下发解冻，待支付宝通知</span>
+          <span v-else-if="o.status === 'pending_cancel' && o.unfreeze_dispatched_at && !o.cancel_refund_pending" class="muted">已下发解冻，待支付宝通知</span>
+          <span v-else-if="o.status === 'pending_cancel' && !o.cancel_approval_allowed" class="muted">取消来源异常，请人工核对</span>
           <template v-if="o.status === 'return_inspecting' && !o.unfreeze_dispatched_at">
             <button class="btn-link primary" @click="approveReturn(o)">核验通过</button>
             <button class="btn-link" @click="rejectReturn(o)">驳回</button>
@@ -255,6 +299,14 @@
         </div>
       </div>
     </div>
+
+    <!-- 无限滚动：哨兵进视口即自动续加载，避免一次性渲染上千行 DOM 拖垮弱机器 -->
+    <div class="feed-foot" ref="sentinel">
+      <span v-if="loadingMore" class="feed-loading">加载中…</span>
+      <span v-else-if="!loading && list.length && !hasMore" class="feed-end">
+        没有更多了 · 共 {{ total }} 单
+      </span>
+    </div>
   </div>
 
   <!-- 详情弹窗 -->
@@ -265,7 +317,35 @@
         <div class="detail-grid">
           <div class="field">
             <div class="label">订单状态</div>
-            <span :class="['tag', statusCls(detail.status)]">{{ detail.status_label }}</span>
+            <span :class="['tag', orderStatusCls(detail)]">{{ detail.status_label }}</span>
+            <!-- audit 里最容易被误读的一种：押金其实冻上了，卡的是租金转支付。
+                 把支付宝的原话摊出来，再给一个幂等的重试入口，免得运营只能"取消订单"。 -->
+            <div v-if="detail.rent_capture_pending" class="rent-stuck">
+              <div>押金已冻结成功，首期租金 ¥{{ fmt(detail.amount) }} 尚未从授权额度中收取，订单因此停在待免押、不会发货。</div>
+              <div v-if="detail.rent_capture_error" class="rent-stuck-err">
+                支付宝返回：{{ detail.rent_capture_error }}
+              </div>
+              <div class="muted small">
+                系统不会自动重复扣款。请客服先联系客户确认，确认后再由工作人员手动重试；当前共尝试 {{ detail.rent_capture_attempts || 0 }} 次。
+              </div>
+              <button
+                class="btn btn-sm"
+                :disabled="retryingRent === detail.id"
+                @click="retryRentCapture(detail)"
+              >{{ retryingRent === detail.id ? '结算中…' : '重试租金结算' }}</button>
+            </div>
+            <div v-if="detail.cancel_refund_pending" class="rent-stuck">
+              <div>押金已经解冻成功，但首期租金原路退款未完成。系统只会重试退款，不会重复解冻押金。</div>
+              <div v-if="detail.cancel_refund_error" class="rent-stuck-err">
+                支付宝返回：{{ detail.cancel_refund_error }}
+              </div>
+              <div class="muted small">已尝试 {{ detail.rent_refund_attempts || 0 }} 次，后台会自动重试</div>
+              <button
+                class="btn btn-sm"
+                :disabled="retryingRefund === detail.id"
+                @click="retryCancelRefund(detail)"
+              >{{ retryingRefund === detail.id ? '退款中…' : '重试租金退款' }}</button>
+            </div>
           </div>
           <div class="field">
             <div class="label">下单时间</div>
@@ -273,11 +353,23 @@
           </div>
           <div class="field">
             <div class="label">商品</div>
-            <div>{{ detail.product_name }} <span class="muted">(#{{ detail.product_id }})</span></div>
+            <div>
+              {{ detail.product_name }} <span class="muted">(#{{ detail.product_id }})</span>
+              <span v-if="detail.sku_name" class="sku-tag">{{ detail.sku_name }}</span>
+            </div>
             <div class="muted">¥{{ fmt(detail.price_per_day) }} × {{ detail.days }} 天</div>
             <div class="muted" v-if="detail.start_date && detail.end_date">
               租期：{{ detail.start_date }} 至 {{ detail.end_date }}
               <span v-if="detail.ship_days">（含物流 {{ detail.ship_days }} 天）</span>
+            </div>
+            <!-- 顺丰真实签收早于约定物流期时，归还日已按真实签收重算，这里说明来龙去脉，
+                 否则运营看到归还日和用户下单时看到的不一致会以为出了 bug -->
+            <div class="muted" v-if="detail.delivered_at_text">
+              实际签收：{{ detail.delivered_at_text }}
+              <span v-if="detail.delivered_source === 'sf'">（顺丰轨迹）</span>
+              <span v-if="detail.ship_days_planned && detail.ship_days_planned !== detail.ship_days">
+                ，提前签收，物流期按实际 {{ detail.ship_days }} 天计（原定 {{ detail.ship_days_planned }} 天），归还日已相应提前
+              </span>
             </div>
           </div>
           <div class="field">
@@ -287,6 +379,23 @@
               原价 ¥{{ fmt(detail.original_amount) }}，优惠 -¥{{ fmt(detail.discount_amount) }}
             </div>
             <div class="muted">押金（冻结）¥{{ fmt(detail.deposit_freeze) }}</div>
+            <!-- 扣过款的订单，冻结池里已经不是下单时那个数了，按原额判断可扣余额会超额 -->
+            <div class="muted" v-if="detail.deposit_consumed > 0">
+              当前剩余冻结 ¥{{ fmt(detail.deposit_remaining) }}（已扣 ¥{{ fmt(detail.deposit_consumed) }}）
+            </div>
+          </div>
+          <!-- 已进入待发货及之后，却没有任何"冻结成功"凭证：押金很可能压根没冻上，
+               货一旦寄出就是零担保。必须最显眼地报出来，而不是安静地不显示倒计时。 -->
+          <div class="field" v-if="detail.freeze_missing">
+            <div class="label">押金担保</div>
+            <div class="freeze-countdown-big expired">
+              <b>⚠️ 未确认冻结</b>
+              <span class="muted small">（订单已进入 {{ detail.status_label }}，但查不到冻结成功记录）</span>
+            </div>
+            <div class="muted small">
+              请点下方「支付宝预授权明细 · 刷新」核实：若授权单状态为 INIT/CLOSED、累计冻结 ¥0，
+              说明这笔押金从未冻结成功，需立即联系用户重新授权或走线下处理，切勿发货。
+            </div>
           </div>
           <div class="field" v-if="detail.freeze_active">
             <div class="label">押金授权倒计时</div>
@@ -311,6 +420,7 @@
             <div class="label">用户</div>
             <div>
               {{ detail.user_real_name || detail.user_nickname || '匿名' }}
+              <span v-if="detail.user_age != null" class="tag tag-gray">{{ detail.user_age }} 岁</span>
               <span v-if="detail.user_verified" class="tag tag-green">已实名</span>
             </div>
             <div class="muted">{{ detail.user_phone || '-' }} · ID {{ detail.user_id }}</div>
@@ -319,6 +429,11 @@
             <div class="label">收货</div>
             <div>{{ detail.address_snapshot?.receiver_name }} · {{ detail.address_snapshot?.receiver_phone }}</div>
             <div class="muted">{{ detail.address_snapshot?.full }}</div>
+          </div>
+          <!-- 用户下单时留的话（与下方「工作人员备注」不同，那个用户看不见） -->
+          <div class="field" v-if="detail.user_remark">
+            <div class="label">用户备注</div>
+            <div class="user-remark">{{ detail.user_remark }}</div>
           </div>
           <div class="field" v-if="detail.coupon_name">
             <div class="label">优惠券</div>
@@ -334,8 +449,35 @@
             <div>
               <span class="tag tag-green" style="margin-right:6px">{{ detail.logistics_company_name }}</span>
               <span class="mono">{{ detail.logistics_no }}</span>
+              <button v-if="logi.supported || !logi.loaded" class="btn-link" style="margin-left:10px"
+                      :disabled="logi.loading" @click="loadLogistics(true)">
+                {{ logi.loading ? '查询中…' : (logi.loaded ? '刷新轨迹' : '查看轨迹') }}
+              </button>
             </div>
             <div class="muted" v-if="detail.shipped_at_text">发货时间：{{ detail.shipped_at_text }}</div>
+
+            <!-- 轨迹：顺丰单且已配凭据时才有；其余情况只显示上面的运单号 -->
+            <div v-if="logi.loaded && !logi.supported" class="muted" style="margin-top:4px">
+              该运单不支持轨迹查询（仅顺丰单、且需在「系统设置」里配好顺丰凭据）
+            </div>
+            <div v-if="logi.error" class="muted" style="margin-top:4px; color:#c0260b">
+              {{ logi.error }}
+            </div>
+            <div v-if="logi.routes.length" class="lg-box">
+              <div class="lg-meta">
+                共 {{ logi.routes.length }} 条轨迹
+                <span v-if="logi.signed_at">· 签收于 {{ logi.signed_at }}</span>
+                <span v-if="logi.synced_at_text" class="muted">· 数据更新于 {{ logi.synced_at_text }}</span>
+              </div>
+              <div v-for="(r, i) in logi.routes" :key="i"
+                   :class="['lg-row', { first: i === 0, signed: r.signed }]">
+                <span class="lg-dot"></span>
+                <code class="lg-time">{{ r.time }}</code>
+                <span class="lg-status">{{ r.status }}</span>
+                <span class="lg-place">{{ r.place }}</span>
+                <span class="lg-desc" :title="r.desc">{{ r.desc }}</span>
+              </div>
+            </div>
           </div>
           <div class="field" v-if="detail.item_huohao">
             <div class="label">绑定库存商品（光影）</div>
@@ -362,9 +504,9 @@
                 <div class="muted small" v-if="detail.item_snapshot.beizhu">备注：{{ detail.item_snapshot.beizhu }}</div>
                 <div class="inv-wenti" v-if="detail.item_snapshot.wenti">⚠️ 问题：{{ detail.item_snapshot.wenti }}</div>
 
-                <!-- 发货时刻的光影租赁记录快照 -->
+                <!-- 光影租赁记录（实时拉取，非发货快照） -->
                 <div class="inv-rents" v-if="detail.item_snapshot.rent_records && detail.item_snapshot.rent_records.length">
-                  <div class="inv-rents-title">租赁记录快照（发货时累计出租 {{ detail.item_snapshot.rent_count || 0 }} 次）</div>
+                  <div class="inv-rents-title">租赁记录（实时 · 累计出租 {{ detail.item_snapshot.rent_count || 0 }} 次）</div>
                   <div class="inv-rent-row" v-for="r in detail.item_snapshot.rent_records" :key="r.id">
                     <span :class="['tag', r.action === 'ship_out' ? (r.pin ? 'tag-red' : 'tag-orange') : 'tag-gray']">{{ rentActionLabel(r.action) }}</span>
                     <span>{{ rentRecordText(r) || '—' }}</span>
@@ -377,7 +519,8 @@
             </div>
             <div v-else>
               <span class="mono">{{ detail.item_huohao }}</span>
-              <span class="muted small" style="margin-left:6px">（发货时未能加载商品快照）</span>
+              <span class="muted small" style="margin-left:6px" v-if="invCardLoading">光影库存加载中…</span>
+              <span class="muted small" style="margin-left:6px" v-else>（光影库存未能实时加载，或货号不存在）</span>
             </div>
           </div>
           <div class="field" v-if="detail.return_logistics_no">
@@ -405,7 +548,29 @@
             <div class="muted" v-if="!detail.sync_ok && detail.sync_err" style="margin-top:4px">
               失败原因：{{ detail.sync_err }}
             </div>
+            <!-- 同步成功但支付宝带回的提示（订单消息未配置 / 用户未授权消息等）。
+                 订单中心状态已经更新，不需要重试，所以不算失败，样式也不用红。 -->
+            <div class="muted" v-else-if="detail.sync_warn" style="margin-top:4px">
+              支付宝提示：{{ detail.sync_warn }}（不影响订单状态同步，无需重试）
+            </div>
           </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field">
+          <div class="label">续租记录</div>
+          <div v-if="renewalsLoading" class="muted">加载中…</div>
+          <div v-else-if="!renewals.length" class="muted">暂无续租记录</div>
+          <table v-else class="table" style="margin-top:8px">
+            <thead><tr><th>原归还日</th><th>新归还日</th><th>天数</th><th>金额</th><th>状态</th><th>支付宝交易号</th></tr></thead>
+            <tbody><tr v-for="r in renewals" :key="r.id">
+              <td>{{ r.original_end_date }}</td><td>{{ r.new_end_date }}</td>
+              <td>{{ r.renew_days }} 天</td><td>¥{{ fmt(r.quoted_amount) }}</td>
+              <td><span :class="['tag', r.status === 'COMPLETED' ? 'tag-green' : (r.status === 'PAYMENT_EXCEPTION' ? 'tag-red' : 'tag-orange')]">{{ r.status }}</span></td>
+              <td class="mono small">{{ r.trade_no || '-' }}</td>
+            </tr></tbody>
+          </table>
         </div>
 
         <div class="divider"></div>
@@ -581,11 +746,16 @@
             </div>
             <div class="cf-row">
               <div class="muted small">
-                <template v-if="detail.freeze_includes_rent !== false">
-                  本订单冻结金额：押金 ¥{{ fmt(detail.deposit_freeze) }} + 租金 ¥{{ fmt(detail.amount) }} = ¥{{ fmt(detail.freeze_amount || (Number(detail.deposit_freeze || 0) + Number(detail.amount || 0))) }}（押金+租金模式）
+                <template v-if="detail.freeze_includes_rent !== false && Number(detail.amount || 0) <= 0">
+                  本订单为 0 元租金（租押分离），授权金额仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}，无租金需转支付。
+                </template>
+                <template v-else-if="detail.freeze_includes_rent !== false">
+                  本订单初始综合授权：押金 ¥{{ fmt(detail.deposit_freeze) }} + 租金 ¥{{ fmt(detail.amount) }} = ¥{{ fmt(detail.freeze_amount || (Number(detail.deposit_freeze || 0) + Number(detail.amount || 0))) }}。
+                  <span v-if="detail.rent_paid_at">租金已自动转支付，当前仅余押金担保。</span>
+                  <span v-else>租金尚未确认转支付，严禁发货。</span>
                 </template>
                 <template v-else>
-                  本订单冻结金额：仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}（仅押金模式；租金独立扣款）
+                  本订单授权金额：仅押金 ¥{{ fmt(detail.freeze_amount || detail.deposit_freeze) }}（租金已下单实付）
                 </template>
                 <br>
                 授权号：<code class="mono small">{{ detail.alipay_auth_no || '（订单尚未完成免押授权）' }}</code>
@@ -700,6 +870,10 @@
     <div class="modal" style="max-width:520px">
       <div class="modal-h">发货 · {{ shipForm.oid }}</div>
       <div class="modal-body">
+        <div class="field" v-if="shipForm.userRemark">
+          <div class="label">用户备注</div>
+          <div class="user-remark">{{ shipForm.userRemark }}</div>
+        </div>
         <div class="field">
           <div class="label">运单号</div>
           <input
@@ -860,7 +1034,7 @@
 </template>
 
 <script>
-const { ref, reactive, computed, inject, onMounted } = Vue;
+const { ref, reactive, computed, inject, onMounted, onUnmounted, nextTick } = Vue;
 
 const STATUS_LABEL = {
   audit:             '待免押',
@@ -892,9 +1066,9 @@ const TAGS_BY_STATUS = {
 // pending_cancel / return_inspecting 走专用按钮（同意/驳回），不放进通用 QUICK_ACTIONS
 const QUICK_ACTIONS = {
   audit:             [{ to: 'cancelled', label: '取消' }],
-  send:              [{ to: 'cancelled', label: '取消' }],
+  send:              [],
   pending_cancel:    [],
-  recv:              [{ to: 'using', label: '标记签收' }, { to: 'cancelled', label: '取消' }],
+  recv:              [{ to: 'using', label: '标记签收' }],
   using:             [{ to: 'return', label: '进入归还' }, { to: 'overdue', label: '标记逾期' }],
   return:            [{ to: 'done', label: '完成订单' }],
   overdue:           [{ to: 'return', label: '已归还' }, { to: 'done', label: '强制完成' }],
@@ -925,8 +1099,17 @@ export default {
     const curTab = ref('all');
     const keyword = ref('');
     const statsCount = ref({});
+    // 下滑无限加载：每次取一页 50 条 append 到 list，滑到底自动续。
+    const page = ref(1);
+    const pageSize = ref(50);
+    const total = ref(0);
+    const loadingMore = ref(false);           // 正在加载下一页
+    const hasMore = computed(() => list.value.length < total.value);
+    const sentinel = ref(null);               // 列表底部哨兵，进视口即触发续加载
+    let io = null;                            // IntersectionObserver 实例
 
     const detail = ref(null);
+    const invCardLoading = ref(false);   // 详情页光影卡片异步加载中标志
     const editStatus = ref('');
     const forceStatus = ref(false);
     const saving = ref(false);
@@ -942,6 +1125,8 @@ export default {
     const notesLoading = ref(false);
     const noteInput = ref('');
     const noteSubmitting = ref(false);
+    const renewals = ref([]);
+    const renewalsLoading = ref(false);
 
     // 预授权扣款（信用免押 方案 A）
     const charges = ref([]);
@@ -1038,13 +1223,20 @@ export default {
     const rentRecordText = (r) => {
       const parts = [];
       if (r.rent_platform) parts.push(r.rent_platform);
-      if (r.rent_start || r.rent_end) parts.push(`${r.rent_start || '?'} ~ ${r.rent_end || '?'}`);
+      // 光影发货时通常只录到期日、不录起租日，故仅显示到期日避免出现 "? ~"
+      if (r.rent_end) parts.push(`${r.rent_end} 到期`);
+      else if (r.rent_start) parts.push(`${r.rent_start} 起租`);
       if (r.renter_name) parts.push(r.renter_name);
+      if (r.rent_remark) parts.push(r.rent_remark);
       return parts.join(' · ');
     };
 
     // 支付宝商家订单同步重试 loading
     const resyncing = ref(false);
+    // 正在重试租金结算的订单号：既用来只 disable 那一行的按钮，
+    // 也充当并发闸——一次只跑一单，避免连点把支付宝打满。
+    const retryingRent = ref('');
+    const retryingRefund = ref('');
 
     const fmt = (v) => {
       const n = Number(v);
@@ -1066,6 +1258,27 @@ export default {
 
     const statusCls = (s) => TAGS_BY_STATUS[s] || 'tag-gray';
 
+    // 「押金已冻结但租金没结清」的单一律标红：它挂在 audit 下，但跟"用户还没付款"
+    // 是两回事——钱已经冻在支付宝了，运营必须能一眼分辨。
+    const orderStatusCls = (o) =>
+      (o && (o.rent_capture_pending || o.cancel_refund_pending) ? 'tag-red' : statusCls(o && o.status));
+
+    // 押金列的副行说明：押金列本身显示的是"现在还冻着多少"，
+    // 扣过款 / 没冻上 / 已解冻这三种情况都得说清楚，否则一个 ¥0 看不出是哪种。
+    const depositNote = (o) => {
+      if (!o || !Number(o.deposit_pool)) return '';
+      const consumed = Number(o.deposit_consumed) > 0
+        ? `原 ¥${fmt(o.deposit_pool)} · 已扣 ¥${fmt(o.deposit_consumed)}` : '';
+      if (Number(o.deposit_remaining)) return consumed;
+      // 剩余为 0 有两种截然不同的原因，必须分清：
+      //   已解冻 = 钱冻过、已经原路退回用户（正常终态）
+      //   未冻结 = 押金压根没冻上（货若已寄出就是零担保，见 freeze_missing 红标）
+      const released = o.unfreeze_completed_at || o.unfreeze_dispatched_at
+        || o.auto_unfreeze_reason || o.status === 'done' || o.freeze_confirmed;
+      if (!released) return consumed || '未冻结';
+      return consumed ? `${consumed} · 余额已解冻` : '已解冻';
+    };
+
     const countOf = (key) => {
       if (key === 'all') return statsCount.value.total ?? null;
       const m = statsCount.value.by_status || {};
@@ -1079,23 +1292,85 @@ export default {
       catch (e) { /* 角标拉不到不阻塞主流程 */ }
     };
 
+    // 当前的服务端过滤条件（tab + 关键词）。搜索/筛选一律由后端执行，
+    // 前端只渲染服务端返回的结果，绝不在本地对 list 做二次过滤。
+    const baseParams = () => {
+      const p = {};
+      if (curTab.value !== 'all') p.status = curTab.value;
+      if (keyword.value) p.keyword = keyword.value;
+      return p;
+    };
+
+    // 首屏 / 重新筛选：回到第 1 页，整屏 loading，替换 list。
     const fetch = async () => {
       loading.value = true;
+      page.value = 1;
       try {
-        const params = {};
-        if (curTab.value !== 'all') params.status = curTab.value;
-        if (keyword.value) params.keyword = keyword.value;
-        const r = await api.list('orders', params);
+        const r = await api.list('orders', { ...baseParams(), page: 1, size: pageSize.value });
         list.value = r.list || [];
+        total.value = r.total || 0;
       } catch (e) { alert(e.message || '加载失败'); }
       finally { loading.value = false; }
       fetchStats();
+      fillRentInfo(list.value);   // 异步补光影平台/备注，不阻塞列表显示
+    };
+
+    // 下滑续加载：取下一页 append。用 id 去重，避免期间有新订单插入导致的错位重复。
+    const loadMore = async () => {
+      if (loadingMore.value || loading.value || !hasMore.value) return;
+      loadingMore.value = true;
+      const next = page.value + 1;
+      try {
+        const r = await api.list('orders', { ...baseParams(), page: next, size: pageSize.value });
+        const seen = new Set(list.value.map(o => o.id));
+        const fresh = (r.list || []).filter(o => !seen.has(o.id));
+        list.value.push(...fresh);
+        total.value = r.total || 0;
+        page.value = next;
+        fillRentInfo(fresh);      // 只给新增的行补光影数据
+      } catch (e) { /* 失败不前进页码，下次滑动可重试 */ }
+      finally { loadingMore.value = false; }
+    };
+
+    // 就地刷新已加载的全部行（发货/状态变更/删除等操作后调用）：一次性重拉
+    // 「当前已展示的条数」，不改变滚动位置，不把用户弹回顶部。
+    const reload = async () => {
+      const size = Math.min(500, Math.max(pageSize.value, list.value.length));
+      try {
+        const r = await api.list('orders', { ...baseParams(), page: 1, size });
+        list.value = r.list || [];
+        total.value = r.total || 0;
+        page.value = Math.max(1, Math.ceil(list.value.length / pageSize.value));
+      } catch (e) { /* 保留现有列表 */ }
+      fetchStats();
+      fillRentInfo(list.value);
+    };
+
+    // 搜索：条件变了从头筛（服务端执行），回第 1 页
+    const doSearch = () => { fetch(); };
+
+    // 异步补数：把指定行的货号发给后端拉光影，回来后把平台/备注填进各行。
+    // 只请求 rows 涉及的货号（续加载时就只补新行），但更新一律遍历 list.value，
+    // 通过响应式代理写入才能触发行重渲染。光影慢/挂只影响这两个标签的出现速度。
+    const fillRentInfo = async (rows) => {
+      const target = rows && rows.length ? rows : list.value;
+      const huohaos = [...new Set(
+        target.map(o => (o.item_huohao || '').trim()).filter(Boolean)
+      )];
+      if (!huohaos.length) return;
+      try {
+        const cards = await api.inventoryCards(huohaos);   // { 货号: {..., rent_platform, rent_remark} }
+        for (const o of list.value) {
+          const c = cards[(o.item_huohao || '').trim()];
+          if (c) { o.rent_platform = c.rent_platform || ''; o.rent_remark = c.rent_remark || ''; }
+        }
+      } catch (e) { /* 光影不可用不影响列表 */ }
     };
 
     const switchTab = (k) => {
       if (curTab.value === k) return;
       curTab.value = k;
-      fetch();
+      fetch();               // fetch 内部会回到第 1 页
     };
 
     const resetFilter = () => {
@@ -1119,7 +1394,79 @@ export default {
         loadAlipayDetail();
         loadCharges();
         loadNotes();
+        loadRenewals();
+        loadInvCard();   // 异步拉光影商品卡片+租赁记录，不阻塞详情主体渲染
+        // 物流轨迹：先清空再拉，避免上一单的轨迹闪现在这一单上
+        Object.assign(logi, { loading: false, loaded: false, supported: false,
+                              routes: [], signed_at: '', synced_at_text: '', error: '' });
+        if ((full.logistics_no || '').trim()) loadLogistics();
       } catch (e) { alert(e.message || '加载失败'); }
+    };
+
+    const loadRenewals = async () => {
+      if (!detail.value) return;
+      renewalsLoading.value = true;
+      try {
+        const r = await api.listOrderRenewals(detail.value.id);
+        renewals.value = r.list || [];
+      } catch (e) { renewals.value = []; }
+      finally { renewalsLoading.value = false; }
+    };
+
+    // ── 物流轨迹 ──
+    // 后端按订单缓存（在途 30 分钟 / 已签收 24 小时），这里默认读缓存；
+    // force=true 是运营点「刷新轨迹」时才回源，避免开个详情就打一次顺丰。
+    const logi = reactive({
+      loading: false, loaded: false, supported: false,
+      routes: [], signed_at: '', synced_at_text: '', error: '',
+    });
+    const loadLogistics = async (force = false) => {
+      const d = detail.value;
+      if (!d || logi.loading) return;
+      logi.loading = true;
+      try {
+        const r = await api.orderLogistics(d.id, force);
+        // 请求期间运营可能已经切到别的订单，回来的数据就不该再往上贴
+        if (!detail.value || detail.value.id !== d.id) return;
+        Object.assign(logi, {
+          loaded: true,
+          supported: !!r.supported,
+          routes: r.routes || [],
+          signed_at: r.signed_at || '',
+          synced_at_text: r.synced_at
+            ? new Date(r.synced_at * 1000).toLocaleString('zh-CN', { hour12: false })
+            : '',
+          error: r.error || '',
+        });
+      } catch (e) {
+        logi.loaded = true;
+        logi.error = e.message || '轨迹查询失败';
+      } finally {
+        logi.loading = false;
+      }
+    };
+
+    // 详情页异步补数：按本单货号拉光影卡片，填入 item_snapshot + 平台/备注。
+    // 光影慢/挂只影响卡片出现速度，详情主体（订单信息）早已渲染。
+    const loadInvCard = async () => {
+      const d = detail.value;
+      const hh = (d && (d.item_huohao || '')).trim();
+      if (!hh) return;
+      invCardLoading.value = true;
+      try {
+        const cards = await api.inventoryCards([hh]);
+        const c = cards[hh];
+        if (detail.value !== d) return;   // 已切换到别的单则丢弃
+        if (c) {
+          detail.value = {
+            ...detail.value,
+            item_snapshot: c,
+            rent_platform: c.rent_platform || '',
+            rent_remark: c.rent_remark || '',
+          };
+        }
+      } catch (e) { /* 光影不可用不影响详情 */ }
+      finally { if (detail.value === d) invCardLoading.value = false; }
     };
 
     // ── 工作人员备注 ──
@@ -1353,7 +1700,7 @@ export default {
           force:  forceStatus.value,
         });
         detail.value = { ...detail.value, ...updated };
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '保存失败'); }
       finally { saving.value = false; }
     };
@@ -1362,6 +1709,8 @@ export default {
     const openShip = async (o) => {
       shipForm.value = {
         oid: o.id,
+        // 用户下单备注：发货前必须看见（"周五后再发"这类要求只能在这一步照做）
+        userRemark: o.user_remark || '',
         no: '',
         detectedCode: '',   // '' | 'SF' | 'JD' | 'unknown'
         detectedName: '',
@@ -1477,11 +1826,59 @@ export default {
         // 后端无论成功失败都返回 code=0，详情字段会带上最新 sync_ok / sync_err
         detail.value = { ...detail.value, ...r };
         // 列表里那一行 sync_ok 也会变；顺便刷新一下
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '同步失败');
       } finally {
         resyncing.value = false;
+      }
+    };
+
+    // 首次自动收租失败后不再由系统循环扣款。客服与客户沟通确认后，
+    // 工作人员才从这里手动重试；固定 out_trade_no 保证不会生成重复交易。
+    const retryRentCapture = async (o) => {
+      if (!o || retryingRent.value) return;
+      const rent = Number(o.initial_rent_amount ?? o.amount ?? 0);
+      if (!confirm(
+        `确认已与客户沟通，并重新发起首期租金扣款？\n\n` +
+        `订单：${o.id}\n本次将向支付宝查询或扣取：¥${rent.toFixed(2)}\n\n` +
+        `支付宝确认成功后，订单会自动更新为「待发货」。`
+      )) return;
+      retryingRent.value = o.id;
+      try {
+        const r = await api.retryRentCapture(o.id);
+        if (detail.value && detail.value.id === o.id) {
+          detail.value = { ...detail.value, ...r };
+        }
+        await reload();
+        if (r.status === 'send') {
+          alert('租金已结清，订单已进入待发货');
+        } else {
+          alert(`仍未结清：${r.rent_capture_error || '支付宝未确认到账'}`);
+        }
+      } catch (e) {
+        alert(e.message || '重试失败');
+      } finally {
+        retryingRent.value = '';
+      }
+    };
+
+    // 押金已解冻的单只重试租金退款；后端固定退款请求号保证幂等。
+    const retryCancelRefund = async (o) => {
+      if (!o || retryingRefund.value) return;
+      retryingRefund.value = o.id;
+      try {
+        const r = await api.retryCancelRefund(o.id);
+        if (detail.value && detail.value.id === o.id) {
+          detail.value = { ...detail.value, ...r };
+        }
+        await reload();
+        if (r.status === 'cancelled') alert('租金已原路退回，订单已取消');
+        else alert(`退款仍未完成：${r.cancel_refund_error || '支付宝未确认退款成功'}`);
+      } catch (e) {
+        alert(e.message || '重试退款失败');
+      } finally {
+        retryingRefund.value = '';
       }
     };
 
@@ -1499,7 +1896,7 @@ export default {
         }
         await api.shipOrder(f.oid, body);
         shipForm.value = null;
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '发货失败');
       } finally {
@@ -1511,25 +1908,27 @@ export default {
       // 「取消」单独走带解冻的专用接口：直接改状态到 cancelled 不会解冻押金，
       // 会把用户预授权冻结额一直卡到到期，故必须走 admin-cancel。
       if (act.to === 'cancelled') return forceCancel(o);
-      if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？`)) return;
+      const overdueHint = act.to === 'overdue'
+        ? '\n\n标记后将立即向支付宝订单中心上报 OVERDUE，并关闭待支付续租申请。'
+        : '';
+      if (!confirm(`确认将订单 ${o.id} 流转为「${STATUS_LABEL[act.to]}」？${overdueHint}`)) return;
       try {
         await api.update('orders', o.id, { status: act.to });
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '操作失败'); }
     };
 
-    // 后台主动取消订单：先弹窗确认（会解冻客户押金），再调 admin-cancel。
+    // 后台主动取消仅用于待免押订单；已付押金的订单必须由用户申请后人工审批。
     const forceCancel = async (o) => {
-      const frozen = Number(o.freeze_amount || o.deposit_freeze || 0);
-      const amountLine = frozen > 0 ? `\n本单已冻结押金约 ¥${frozen.toFixed(2)}，取消后将下发解冻。` : '';
       if (!confirm(
         `⚠️ 取消订单 ${o.id}\n\n` +
-        `取消会解冻客户押金，请务必确认该订单尚未发货 / 已收回货物后再操作！${amountLine}\n\n` +
-        `确认继续取消并解冻押金？`
+        `该入口仅用于尚未成功冻结押金的待免押订单。系统会先核对支付宝资金状态；` +
+        `若押金已经冻结，将拒绝直接取消，必须让用户提交取消申请后再审批。\n\n` +
+        `确认核对并取消？`
       )) return;
       try {
         await api.adminForceCancel(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '取消失败'); }
     };
 
@@ -1538,10 +1937,26 @@ export default {
     // 回来才会推到 cancelled；商家这里只触发解冻请求下发。
     const approveCancel = async (o) => {
       const userMsg = o.cancel_reason ? `用户填写理由：${o.cancel_reason}\n\n` : '';
-      if (!confirm(`${userMsg}同意取消订单 ${o.id}？\n将下发解冻请求；支付宝异步确认后订单会自动置为已取消。`)) return;
+      const frozen = Number(o.cancel_freeze_release_amount || 0);
+      const deposit = Number(o.cancel_deposit_release_amount || 0);
+      const initialRent = Number(o.cancel_initial_rent_amount || 0);
+      const rent = Number(o.cancel_rent_refund_amount || 0);
+      const freezeDetail = Math.abs(frozen - deposit) >= 0.01
+        ? `（押金 ¥${deposit.toFixed(2)}，未扣租金仍在冻结池内）`
+        : `（押金 ¥${deposit.toFixed(2)}）`;
+      const rentLine = o.cancel_rent_was_paid && rent > 0
+        ? `• 原路退还首期租金 ¥${rent.toFixed(2)}`
+        : initialRent > 0
+          ? `• 首期租金 ¥${initialRent.toFixed(2)} 未扣成功，无需退款`
+          : '• 本单首期租金为 ¥0.00，无需退款';
+      if (!confirm(
+        `${userMsg}同意取消订单 ${o.id}？\n\n` +
+        `确认后系统将：\n• 释放支付宝冻结额度 ¥${frozen.toFixed(2)} ${freezeDetail}\n${rentLine}\n\n` +
+        `若押金已解冻但租金退款失败，订单会保留异常状态供单独重试。`
+      )) return;
       try {
         await api.approveOrderCancel(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '同意失败'); }
     };
     const rejectCancel = async (o) => {
@@ -1549,7 +1964,7 @@ export default {
       if (reason === null) return;  // 用户点了取消按钮
       try {
         await api.rejectOrderCancel(o.id, reason);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '驳回失败'); }
     };
 
@@ -1566,7 +1981,7 @@ export default {
       )) return;
       try {
         await api.approveOrderReturn(o.id);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '核验失败'); }
     };
     const rejectReturn = async (o) => {
@@ -1574,7 +1989,7 @@ export default {
       if (reason === null) return;
       try {
         await api.rejectOrderReturn(o.id, reason);
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '驳回失败'); }
     };
 
@@ -1609,7 +2024,7 @@ export default {
           logistics_no:      f.no,
         });
         adminReturnForm.value = null;
-        await fetch();
+        await reload();
       } catch (e) {
         alert(e.message || '提交失败');
       } finally {
@@ -1625,15 +2040,28 @@ export default {
       if (!confirm(tip)) return;
       try {
         await api.remove('orders', o.id, safeDelete ? null : { force: true });
-        await fetch();
+        await reload();
       } catch (e) { alert(e.message || '删除失败'); }
     };
 
-    onMounted(fetch);
+    // 首屏加载 + 装无限滚动观察器：哨兵进视口（提前 300px）就续加载下一页
+    onMounted(async () => {
+      await fetch();
+      await nextTick();
+      if (sentinel.value && 'IntersectionObserver' in window) {
+        io = new IntersectionObserver((entries) => {
+          if (entries.some(e => e.isIntersecting)) loadMore();
+        }, { rootMargin: '300px' });
+        io.observe(sentinel.value);
+      }
+    });
+    onUnmounted(() => { if (io) { io.disconnect(); io = null; } });
     return {
       list, loading, tabs: TABS, curTab, keyword, statusLabel: STATUS_LABEL,
-      detail, editStatus, forceStatus, saving,
+      detail, invCardLoading, editStatus, forceStatus, saving,
+      logi, loadLogistics,
       notes, notesLoading, noteInput, noteSubmitting, loadNotes, submitNote,
+      renewals, renewalsLoading, loadRenewals,
       alipay, alipayLoading, loadAlipayDetail, failHeadline,
       charges, chargesLoading, chargeBusy, chargeForm, chargeSubmitting,
       chargeReasonTypes, chargeSubjectPreview,
@@ -1645,17 +2073,43 @@ export default {
       openShip, closeShip, onWaybillInput, submitShip,
       uiCfg, onHuohaoInput, invPics, invCover, rentActionLabel, rentRecordText, fillWaybillFromRent,
       resyncing, resync,
+      retryingRent, retryRentCapture, retryingRefund, retryCancelRefund, orderStatusCls,
+      depositNote,
       approveCancel, rejectCancel,
       approveReturn, rejectReturn,
       adminReturnForm, openAdminReturnShip, closeAdminReturnShip, submitAdminReturnShip,
       fmt, onCoverError, statusCls, countOf, actionsFor,
-      fetch, switchTab, resetFilter, openDetail, saveStatus, quickTransition, remove,
+      fetch, doSearch, switchTab, resetFilter, openDetail, saveStatus, quickTransition, remove,
+      total, loadingMore, hasMore, sentinel,
     };
   },
 };
 </script>
 
 <style scoped>
+/* 无限滚动底部：哨兵 + 状态文案 */
+.feed-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 12px 0 4px;
+}
+.feed-loading { font-size: 13px; color: var(--text-2, #6b7280); }
+.feed-loading::before {
+  content: '';
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-right: 8px;
+  border: 2px solid var(--line, #d6dbe3);
+  border-top-color: var(--primary, #2b7cff);
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: feed-spin 0.7s linear infinite;
+}
+@keyframes feed-spin { to { transform: rotate(360deg); } }
+.feed-end { font-size: 12px; color: var(--text-3, #9aa4b2); }
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -1701,6 +2155,18 @@ export default {
   font-size: 13px;
   line-height: 1.4;
   color: var(--text);
+}
+
+/* 用户下单备注：商家需要照做的话，给个浅黄底让它在 grid 里跳出来 */
+.user-remark {
+  background: #fff8e6;
+  border-left: 3px solid var(--warn, #ff8a00);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 详情弹窗「工作人员备注」子区域 */
@@ -1753,6 +2219,21 @@ export default {
   padding: 0 4px;
 }
 .prod-name { font-weight: 500; line-height: 1.45; word-break: break-word; }
+/* 订单里的 SKU 标签：下单时选中的 SKU 名快照 */
+.sku-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: #2f5d9e;
+  background: #eef4ff;
+  border: 1px solid #cfe0ff;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
 .rent-plat {
   display: inline-block;
   margin-top: 4px;
@@ -1764,6 +2245,15 @@ export default {
   border: 1px solid #ffe0b2;
   border-radius: 4px;
   white-space: nowrap;
+}
+
+.rent-remark {
+  display: inline-block;
+  margin-top: 4px;
+  margin-left: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7280;
 }
 
 .strike { text-decoration: line-through; }
@@ -1917,6 +2407,28 @@ export default {
   color: #b0b3ba;
 }
 
+/* 押金已冻结、租金没收上来的告警块（订单详情「订单状态」下方） */
+.rent-stuck {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ffccc7;
+  border-radius: 8px;
+  background: #fff4ee;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #a8321a;
+}
+.rent-stuck-err {
+  margin-top: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  color: #7a2412;
+}
+.rent-stuck .btn {
+  margin-top: 8px;
+}
+
 /* 预授权扣款（信用免押 方案 A） */
 .charge-form {
   margin: 8px 0 14px;
@@ -2014,6 +2526,40 @@ export default {
 .refund-item + .refund-item { border-top: 1px dashed #dde3ec; padding-top: 4px; margin-top: 4px; }
 
 /* 光影库存商品卡片（发货弹窗 + 订单详情共用） */
+/* ===== 物流轨迹（订单详情）=====
+   一行一条，最新那条加重显示；行内固定列宽让时间/状态/地点纵向对齐，
+   长备注单行截断并挂 title，避免把详情面板撑高。 */
+.lg-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #fbfcfe;
+  border: 1px solid #eef1f6;
+  border-radius: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.lg-meta { font-size: 11px; color: #6b7280; margin-bottom: 8px; }
+.lg-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: #9aa3b2;
+  padding: 3px 0;
+}
+.lg-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #d3d8e2; flex-shrink: 0;
+  align-self: center;
+}
+.lg-row.first .lg-dot { background: #4d8dff; width: 8px; height: 8px; }
+.lg-row.first.signed .lg-dot { background: #2a7942; }
+.lg-row.first { color: #1a1f2e; font-weight: 500; }
+.lg-time { font-family: ui-monospace, Menlo, monospace; flex-shrink: 0; }
+.lg-status { width: 48px; flex-shrink: 0; }
+.lg-place { width: 64px; flex-shrink: 0; }
+.lg-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .inv-card {
   display: flex;
   gap: 12px;

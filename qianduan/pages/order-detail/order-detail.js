@@ -1,7 +1,8 @@
 const { get, post } = require('../../utils/request.js');
+const pricing = require('../../utils/pricing.js');
 
 const STATUS_TEXT = {
-  pay: '待支付', audit: '待免押',
+  audit: '待免押',
   send: '待发货', pending_cancel: '取消审核中',
   recv: '待收货', using: '租赁中',
   return: '待归还', overdue: '已逾期',
@@ -37,8 +38,30 @@ const COURIER_NAMES = {
   JD: '京东物流',
 };
 
-// 起租日 + N 天 → 触发强制违约扣款的截止日（业务硬约束 350 天）
-const FORCE_BREACH_DAYS = 350;
+// 顶部进度条的五个阶段。10 种订单状态收敛到这 5 段展示，
+// 用户不需要理解 return_inspecting 和 overdue 的区别，只需要知道走到哪一步了。
+const STEPS = ['免押授权', '商家发货', '签收使用', '归还/续租', '订单完成'];
+const STATUS_STEP = {
+  audit: 0,
+  send: 1, pending_cancel: 1,
+  recv: 2, using: 2,
+  return: 3, overdue: 3, return_inspecting: 3,
+  done: 4,
+};
+// 状态副标题：告诉用户"现在轮到谁做什么"，比只写状态名有用
+const STATUS_SUB = {
+  audit:  '请完成免押/押金授权，授权成功后系统自动结算租金',
+  send:   '商家正在备货，承诺 48 小时内发货',
+  pending_cancel: '取消申请审核中，商家同意后将解冻押金并退还已付首期租金',
+  recv:   '商家已发货，请注意查收',
+  using:  '设备使用中，到期前可归还或续租',
+  return: '租期即将到期，请及时安排归还',
+  overdue:'已超过预计归还日，请尽快寄回',
+  return_inspecting: '已收到寄回信息，等待商家签收核验',
+  done:   '订单已完成，感谢使用',
+  cancelled: '订单已取消',
+};
+
 // 实时累计租金允许显示的订单状态（计费已开始 / 进行中 / 待归还 / 已逾期 / 核验中）
 const RENT_CARD_STATUS = new Set(['recv', 'using', 'return', 'overdue', 'return_inspecting']);
 
@@ -54,6 +77,35 @@ function ymd(d) {
   const z = (n) => (n < 10 ? '0' + n : '' + n);
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
 }
+// 支付宝 picker 在不同基础库/端上可能回传字符串、数组、
+// {year,month,day} 或时间戳。统一归一为 YYYY-MM-DD，避免合法日期被误判。
+function normalizePickerDate(raw, fallbackYear) {
+  if (raw === undefined || raw === null || raw === '') return '';
+  if (Array.isArray(raw) && raw.length >= 3) {
+    return ymd(new Date(Number(raw[0]), Number(raw[1]) - 1, Number(raw[2])));
+  }
+  if (typeof raw === 'object') {
+    if (raw.value !== undefined) return normalizePickerDate(raw.value, fallbackYear);
+    const yy = Number(raw.year || raw.y || 0);
+    const mm = Number(raw.month || raw.m || 0);
+    const dd = Number(raw.day || raw.d || raw.date || 0);
+    if (yy && mm && dd) return ymd(new Date(yy, mm - 1, dd));
+  }
+  if (typeof raw === 'number' || /^\d{10,13}$/.test(String(raw))) {
+    let ts = Number(raw);
+    if (ts < 1e12) ts *= 1000;
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? '' : ymd(d);
+  }
+  const s = String(raw).trim();
+  const isoHead = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/.exec(s);
+  if (isoHead) return ymd(new Date(Number(isoHead[1]), Number(isoHead[2]) - 1, Number(isoHead[3])));
+  let m = /^(\d{4})[-\/.\u5e74](\d{1,2})[-\/.\u6708](\d{1,2})(?:\u65e5)?$/.exec(s);
+  if (m) return ymd(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  m = /^(\d{1,2})[-\/.\u6708](\d{1,2})(?:\u65e5)?$/.exec(s);
+  if (m && fallbackYear) return ymd(new Date(Number(fallbackYear), Number(m[1]) - 1, Number(m[2])));
+  return '';
+}
 function addDays(d, n) {
   const out = new Date(d);
   out.setDate(out.getDate() + n);
@@ -66,57 +118,28 @@ function daysDiff(d1, d2) {
   return Math.round((b - a) / 86400000);
 }
 
-// 分段计费 tiers 清洗 + 规范化（镜像后端 normalize_tiers / calc_amount 语义）
-function normalizeTiers(raw, fallbackPrice) {
-  const tiers = [];
-  if (Array.isArray(raw)) {
-    for (const t of raw) {
-      const f = parseInt(t && t.from, 10);
-      const p = Number(t && t.price);
-      if (!isNaN(f) && f >= 1 && !isNaN(p) && p >= 0) tiers.push({ from: f, price: p });
-    }
-  }
-  if (!tiers.length) {
-    const p = Number(fallbackPrice);
-    if (!isNaN(p) && p >= 0) tiers.push({ from: 1, price: p });
-  }
-  if (!tiers.length) return null;
-  tiers.sort((a, b) => a.from - b.from);
-  if (tiers[0].from !== 1) tiers[0] = { from: 1, price: tiers[0].price };
-  return tiers;
-}
-function calcRent(days, tiers) {
-  days = Math.max(0, parseInt(days, 10) || 0);
-  if (!days || !tiers || !tiers.length) return 0;
-  let total = 0;
-  for (let i = 0; i < tiers.length; i++) {
-    const seg = tiers[i];
-    if (seg.from > days) break;
-    const segEndRaw = (i + 1 < tiers.length) ? (tiers[i + 1].from - 1) : days;
-    const segEnd = Math.min(segEndRaw, days);
-    total += (segEnd - seg.from + 1) * seg.price;
-  }
-  return Math.round(total * 100) / 100;
-}
-function tierLines(tiers) {
-  if (!tiers || !tiers.length) return [];
-  return tiers.map((cur, i) => {
-    const next = tiers[i + 1];
-    const range = next ? `第 ${cur.from}–${next.from - 1} 天` : `第 ${cur.from} 天起`;
-    return { range, price: cur.price.toFixed(2) };
-  });
-}
-
 Page({
   data: {
     o: {}, freezing: false, charges: [], chargeTotalText: '',
+    renewal: {
+      show: false, selected: 3, custom: false, customDate: '', minDate: '', maxDate: '',
+      quote: null, quoting: false, paying: false, maxExtendDays: 60, unavailableMsg: '',
+      options: [{ days: 3 }, { days: 7 }, { days: 15 }, { days: 30 }],
+    },
     // 寄回归还表单状态
     couriers: [],       // /api/orders/couriers 返回的列表
     rsCompany: '',      // 选中的快递公司编码（SF/JD）
     rsNo: '',           // 用户输入的运单号
     rsSubmitting: false,
-    // 实时租金累计卡（show=false 时整张卡不渲染）
+    // 已付租金卡（show=false 时整张卡不渲染）
     rent: { show: false },
+    steps: STEPS,
+    infoOpen: false,          // 订单信息「展开更多」
+    // 物流轨迹。supported=false 时卡片退化成"公司 + 运单号"，不显示时间轴
+    logi: {
+      loading: false, loaded: false, supported: false,
+      routes: [], latest: null, signedAt: '', error: '', expanded: false,
+    },
   },
 
   onLoad(q) {
@@ -129,9 +152,13 @@ Page({
     this.loadCouriers();
   },
 
-  onUnload() { this._stopShipTimer(); this._stopRentTimer(); },
-  onHide()   { this._stopShipTimer(); this._stopRentTimer(); },
+  onUnload() { this._stopShipTimer(); },
+  onHide()   { this._stopShipTimer(); },
   onShow()   {
+    // 从续租页返回时刷新新的归还日和租金。首次 onShow 交给 onLoad，
+    // 避免同一订单并发拉两次。
+    if (this._shownOnce && this._orderId) this.loadOrder(this._orderId);
+    this._shownOnce = true;
     // 从客服电话等场景返回时，立即重算一次（避免 1s 跳变），然后按需重启计时器
     if (this._orderId && this.data.o && this.data.o.status === 'send') {
       const o = { ...this.data.o };
@@ -143,11 +170,6 @@ Page({
         'o._shipOverdue': o._shipOverdue,
       });
       if (!o._shipOverdue && !this._shipTimer) this._startShipTimer();
-    }
-    // 实时租金卡：onShow 立即重算，跨午夜回来天数才不会卡在昨天
-    if (this._orderId && this.data.o && RENT_CARD_STATUS.has(this.data.o.status)) {
-      this._refreshRent();
-      if (!this._rentTimer) this._startRentTimer();
     }
     // 从子页（如退款申请页）返回时刷新扣款列表，让 refund_apply 状态
     // 从 ''→PENDING / REJECTED→PENDING 等变化立即反映到 UI；
@@ -178,6 +200,20 @@ Page({
         || (Number(o.deposit_freeze || 0) + (o._freezeIncludesRent ? Number(o.amount || 0) : 0));
       o._freezeText = freezeAmt.toFixed(2);
       o._shortName   = shortName(o.product_name);
+      // 顶部进度 + 副标题
+      o._stepIndex = STATUS_STEP[o.status];
+      if (o._stepIndex === undefined) o._stepIndex = -1;   // cancelled：不画进度条
+      o._statusSub = STATUS_SUB[o.status] || '';
+      // 只有后端确认押金真冻住了（freeze_confirmed）才敢对用户说"授权已成功"。
+      // 早先这里判的是 o.alipay_auth_no，而授权号在用户没完成授权时就已经有了。
+      if (o.status === 'audit' && o.freeze_confirmed && !o.rent_paid_at) {
+        o._statusSub = (o.rent_capture_last_error || o.rent_payment_error)
+          ? '押金授权已成功，但首期租金结算未完成；系统不会重复扣款，请等待客服联系处理'
+          : '押金授权已成功，正在进行首次租金结算，结算前不会发货';
+      }
+      o._cancelled = o.status === 'cancelled';
+      // 租期时间轴：与下单时同一套算法（utils/pricing），四个日期口径一致
+      o._tl = pricing.buildTimeline(o.start_date, o.end_date, Number(o.ship_days) || 0);
       // 物流字段渲染
       const lc = (o.logistics_company || '').toUpperCase();
       o._logiCompanyName = COURIER_NAMES[lc] || lc || '快递';
@@ -187,15 +223,15 @@ Page({
       // 启动 / 停止 48h 发货倒计时
       if (o.status === 'send' && !o._shipOverdue) this._startShipTimer();
       else this._stopShipTimer();
-      // 实时租金累计卡：仅在计费期相关状态下显示并启动 1 分钟刷新
+      // 已付租金卡只按订单快照构建，金额不随时间变化。
       this._refreshRent();
-      if (RENT_CARD_STATUS.has(o.status)) this._startRentTimer();
-      else this._stopRentTimer();
-      // 并行拉历史扣款记录（拉不到也不阻塞主流程）
+      // 并行拉历史扣款记录 / 物流轨迹（拉不到也不阻塞主流程）
       this.loadCharges();
+      this.loadLogistics();
+      this._prepareRenewalCard(o);
       // 待免押且发起过冻结的订单：进页面主动向支付宝对账一次。
-      // 用户付完款没等到结果就退出/异步通知丢失时，凭这次 query 就能把订单
-      // 推进到待发货，而不是一直停在"待免押"。只对账一次，避免 loadOrder 循环。
+      // 首次授权通知丢失时可补做首次结算；若首期收租已经失败，本次只查状态，
+      // 不会因为用户刷新页面再次扣款。
       if (o.status === 'audit' && Number(o.alipay_freeze_attempts || 0) > 0
           && !this._auditReconciled) {
         this._auditReconciled = true;
@@ -209,7 +245,68 @@ Page({
     } catch (e) {}
   },
 
-  // -------------------- 实时租金累计 --------------------
+  toggleInfo() { this.setData({ infoOpen: !this.data.infoOpen }); },
+  onOpenAgreement() { my.navigateTo({ url: '/pages/agreement/agreement' }); },
+  onDepositHelp() {
+    const includesRent = !!((this.data.o || {})._freezeIncludesRent);
+    my.alert({
+      title: '押金说明',
+      content: includesRent
+        ? '押金与租金一次授权。授权成功后，租金立即完成支付，剩余押金作为信用担保；归还验收通过后，押金授权将自动解除。'
+        : '租金已在下单时支付。芝麻信用免押仅用于押金担保；归还验收通过后，押金授权将自动解除。',
+      buttonText: '我知道了',
+    });
+  },
+
+  // -------------------- 物流轨迹 --------------------
+  // 后端已按订单缓存（在途 30 分钟 / 已签收 24 小时），这里只管取和渲染。
+  // 未配顺丰、非顺丰单、还没发货，接口都回 supported=false，卡片退化成
+  // 原来的"公司 + 运单号"两行，不报错也不留空白。
+
+  /** 轨迹时间戳 'YYYY-MM-DD HH:MM:SS' → 拆成 {d:'10-03', t:'07:55'} 两列展示 */
+  _fmtRouteTime(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s || '');
+    return m ? { d: `${m[2]}-${m[3]}`, t: `${m[4]}:${m[5]}` } : { d: s || '', t: '' };
+  },
+
+  async loadLogistics(force) {
+    const o = this.data.o;
+    if (!o || !o.logistics_no) return;
+    if (this.data.logi.loading) return;
+    this.setData({ 'logi.loading': true });
+    try {
+      const r = await get(`/api/orders/${o.id}/logistics${force ? '?refresh=1' : ''}`);
+      const routes = (r.routes || []).map((x) => {
+        const tm = this._fmtRouteTime(x.time);
+        return { ...x, _d: tm.d, _t: tm.t };
+      });
+      this.setData({
+        logi: {
+          loading:  false,
+          loaded:   true,
+          supported: !!r.supported,
+          routes,
+          latest:   routes[0] || null,
+          signedAt: r.signed_at || '',
+          error:    r.error || '',
+          expanded: this.data.logi.expanded,
+        },
+      });
+    } catch (e) {
+      this.setData({ 'logi.loading': false, 'logi.loaded': true });
+    }
+  },
+
+  toggleLogi() { this.setData({ 'logi.expanded': !this.data.logi.expanded }); },
+
+  /** 手动刷新：绕过缓存回源。用户主动触发，频次可控 */
+  async onRefreshLogistics() {
+    if (this.data.logi.loading) return;
+    await this.loadLogistics(true);
+    my.showToast({ content: '已刷新', duration: 1200 });
+  },
+
+  // -------------------- 已付租金 --------------------
   // 拼一份当前的 rent 视图模型
   //
   // 时间轴语义（创建订单时落库）：
@@ -222,79 +319,31 @@ Page({
     const physicalStart = parseYMD(o.start_date);
     if (!physicalStart) return { show: false };
 
-    const tiers = normalizeTiers(o.price_tiers, o.price_per_day);
-    if (!tiers) return { show: false };
-
     // 物流免租期：订单上下单时锁定的天数（兜底取系统默认 3 天）
     const shipDays = Math.max(0, parseInt(o.ship_days, 10) || 0);
     const billingStart = addDays(physicalStart, shipDays);  // 真正起租日
 
     const today0 = new Date();
     today0.setHours(0, 0, 0, 0);
-    const physicalStart0 = new Date(physicalStart);
-    physicalStart0.setHours(0, 0, 0, 0);
-    const billingStart0 = new Date(billingStart);
-    billingStart0.setHours(0, 0, 0, 0);
-
-    // 三段状态：未发货前 / 物流免租期内 / 已开始计费
-    const notStarted     = today0 < physicalStart0;
-    const inShipPeriod   = !notStarted && today0 < billingStart0;
-    const inBilling      = today0 >= billingStart0;
-
-    // 累计天数（计费第 1 天 = billingStart 当天）
-    const billingDays = inBilling ? (daysDiff(billingStart0, today0) + 1) : 0;
-    const accumulated = calcRent(billingDays, tiers);
-
-    // 物流期内已走了几天（用于显示 "物流期 X / Y 天"）
-    const shipUsed = inShipPeriod ? (daysDiff(physicalStart0, today0) + 1)
-                                  : (inBilling ? shipDays : 0);
-
     // o.end_date 现在就是"归还日"（酒店式语义：归还日不计入用机/计费），
     // 由下单日历 _rangeForRentDays / _calcRent 统一产出，这里直接用即可。
     const returnDate = parseYMD(o.end_date);
-    const breachDate = addDays(billingStart, FORCE_BREACH_DAYS);
 
     return {
       show: true,
-      notStarted,
-      inShipPeriod,
       // 归还日当天不算逾期；超过归还日（次日起）才标"已超归还日"
       overhold: !!(returnDate && today0 > returnDate),
       shipDays,
-      shipUsed,
-      currentDays: billingDays,
-      accumulated: accumulated.toFixed(2),
+      paidAmount: Number(o.amount || 0).toFixed(2),
       // 时间轴上的几个关键日期
       physicalStartText: ymd(physicalStart),     // 包裹出库日 = 物流期第 1 天
       billingStartText: ymd(billingStart),       // 实际起租 / 开始计费日
       endDateText: returnDate ? ymd(returnDate) : '',  // 预计归还日 = 最后用机日 + 1
-      breachDateText: ymd(breachDate),
-      tierLines: tierLines(tiers),
     };
   },
   _refreshRent() {
     const rent = this._buildRent(this.data.o);
-    // 只在数值真的变了才 setData，避免无谓 diff
-    const cur = this.data.rent || {};
-    if (
-      cur.show !== rent.show ||
-      cur.accumulated !== rent.accumulated ||
-      cur.currentDays !== rent.currentDays ||
-      cur.shipUsed !== rent.shipUsed ||
-      cur.inShipPeriod !== rent.inShipPeriod ||
-      cur.overhold !== rent.overhold ||
-      cur.notStarted !== rent.notStarted
-    ) {
-      this.setData({ rent });
-    }
-  },
-  _startRentTimer() {
-    this._stopRentTimer();
-    // 1 分钟刷一次足够：累计金额按天阶跃，1 分钟内最多差一次跨日
-    this._rentTimer = setInterval(() => this._refreshRent(), 60 * 1000);
-  },
-  _stopRentTimer() {
-    if (this._rentTimer) { clearInterval(this._rentTimer); this._rentTimer = null; }
+    this.setData({ rent });
   },
 
   // 历史扣款记录（押金被扣的真实流水）
@@ -445,6 +494,142 @@ Page({
     my.navigateTo({ url: `/pages/product/product?id=${pid}&review=1` });
   },
 
+  // -------------------- 详情页内续租卡片 --------------------
+  _prepareRenewalCard(o) {
+    const show = !!(o && ['using', 'return'].includes(o.status) && parseYMD(o.end_date));
+    if (!show) {
+      if (this.data.renewal.show) this.setData({ 'renewal.show': false });
+      return;
+    }
+    // 归还日变了（初次加载/续租成功）才重置，普通刷新不打断用户选择。
+    if (this._renewalBaseEnd === o.end_date) return;
+    this._renewalBaseEnd = o.end_date;
+    const end = parseYMD(o.end_date);
+    const minDate = ymd(addDays(end, 1));
+    // 单次最多 60 天；同时必须在押金授权到期日前 10 天归还。
+    const singleMax = addDays(end, 60);
+    const authStartTs = Number(o.send_at || o.created_at || 0);
+    const authDeadline = authStartTs ? new Date((authStartTs + 350 * 86400) * 1000) : null;
+    if (authDeadline) authDeadline.setHours(0, 0, 0, 0);
+    const maxEnd = authDeadline && authDeadline < singleMax ? authDeadline : singleMax;
+    const maxExtendDays = Math.max(0, daysDiff(end, maxEnd));
+    const maxDate = ymd(maxEnd);
+    const presetDays = [3, 7, 15, 30];
+    const options = presetDays.map(days => ({ days, disabled: days > maxExtendDays }));
+    const defaultDays = presetDays.find(days => days <= maxExtendDays) || 0;
+    const unavailableMsg = maxExtendDays < 1
+      ? `当前归还日已接近押金授权截止日 ${maxDate}，无法续租`
+      : '';
+    this.setData({
+      renewal: {
+        show: true, selected: defaultDays, custom: defaultDays === 0, customDate: minDate,
+        minDate, maxDate, maxExtendDays, unavailableMsg,
+        quote: null, quoting: false, paying: false, options,
+      },
+    });
+    if (defaultDays) this._loadRenewalQuote(ymd(addDays(end, defaultDays)), defaultDays);
+    else if (maxExtendDays >= 1) this._loadRenewalQuote(minDate, 0);
+  },
+
+  onRenewalPreset(e) {
+    const days = Number(e.currentTarget.dataset.days || 0);
+    const end = parseYMD((this.data.o || {}).end_date);
+    if (!end || ![3, 7, 15, 30].includes(days) || days > Number(this.data.renewal.maxExtendDays || 0)) return;
+    this.setData({ 'renewal.selected': days, 'renewal.custom': false, 'renewal.quote': null });
+    this._loadRenewalQuote(ymd(addDays(end, days)), days);
+  },
+
+  onRenewalCustomTap() {
+    if (Number(this.data.renewal.maxExtendDays || 0) < 1) return;
+    this.setData({ 'renewal.selected': 0, 'renewal.custom': true });
+  },
+
+  onRenewalDateChange(e) {
+    const oldEnd = parseYMD((this.data.o || {}).end_date);
+    const detail = (e && e.detail) || {};
+    const raw = detail.value !== undefined ? detail.value
+      : (detail.date !== undefined ? detail.date : detail);
+    const value = normalizePickerDate(raw, oldEnd && oldEnd.getFullYear());
+    const picked = parseYMD(value);
+    console.log('[renewal-date]', JSON.stringify({ raw, value, oldEnd: (this.data.o || {}).end_date }));
+    if (!picked || !oldEnd || picked <= oldEnd) {
+      my.showToast({ content: '请选择有效的新归还日期', type: 'none' });
+      return;
+    }
+    const days = daysDiff(oldEnd, picked);
+    const maxDays = Number(this.data.renewal.maxExtendDays || 0);
+    if (days < 1 || days > maxDays || days > 60) {
+      my.showToast({ content: `单次最多续租 60 天，且需在押金授权到期前 10 天归还`, type: 'none' });
+      return;
+    }
+    this.setData({
+      'renewal.selected': 0, 'renewal.custom': true,
+      'renewal.customDate': value, 'renewal.quote': null,
+    });
+    this._loadRenewalQuote(value, 0);
+  },
+
+  async _loadRenewalQuote(newEndDate, selected) {
+    const oid = this._orderId;
+    if (!oid || !/^\d{4}-\d{2}-\d{2}$/.test(newEndDate || '')) return;
+    const seq = (this._renewalQuoteSeq || 0) + 1;
+    this._renewalQuoteSeq = seq;
+    this.setData({ 'renewal.quoting': true });
+    try {
+      // hideError：报价失败不弹通用 toast，改把后端文案常驻在卡片上。
+      // 0 元租金（租押分离）单每次报价都会失败，一闪而过的 toast 等于没提示。
+      const quote = await get(
+        `/api/orders/${oid}/renewal/quote`, { new_end_date: newEndDate }, { hideError: true },
+      );
+      if (seq !== this._renewalQuoteSeq) return;
+      this.setData({
+        'renewal.quote': quote, 'renewal.quoting': false,
+        'renewal.selected': selected, 'renewal.unavailableMsg': '',
+      });
+    } catch (e) {
+      if (seq === this._renewalQuoteSeq) {
+        this.setData({
+          'renewal.quote': null, 'renewal.quoting': false,
+          // 网络错误没有业务文案，退回通用提示，不要显示空白
+          'renewal.unavailableMsg': (e && e.msg) || '暂时无法获取续租报价，请稍后重试',
+        });
+      }
+    }
+  },
+
+  async onRenewalPay() {
+    const rn = this.data.renewal || {};
+    const quote = rn.quote;
+    if (rn.paying || !quote || !quote.new_end_date) return;
+    if (!my.tradePay) { my.alert({ content: '续租支付请使用支付宝真机' }); return; }
+    this.setData({ 'renewal.paying': true });
+    try {
+      const renewal = await post(`/api/orders/${this._orderId}/renewals`, {
+        new_end_date: quote.new_end_date,
+      });
+      const pay = await post(`/api/orders/renewals/${renewal.id}/pay`, {});
+      if (pay.completed) { await this._renewalDone(quote.new_end_date); return; }
+      const returned = await this._tradePay(pay.trade_no);
+      if (!returned) return;
+      my.showLoading({ content: '确认续租支付', mask: true });
+      const result = await post(`/api/orders/renewals/${renewal.id}/query`, {});
+      my.hideLoading();
+      if (result.completed) await this._renewalDone(quote.new_end_date);
+      else my.alert({ title: '支付结果确认中', content: '如已扣款，系统会通过支付宝通知自动完成续租。' });
+    } catch (e) {
+      my.hideLoading();
+    } finally {
+      this.setData({ 'renewal.paying': false });
+    }
+  },
+
+  async _renewalDone(newEndDate) {
+    my.showToast({ content: '续租成功', type: 'success' });
+    this._renewalBaseEnd = '';
+    await this.loadOrder(this._orderId);
+    my.alert({ title: '续租成功', content: `新归还日期：${newEndDate}` });
+  },
+
   // 点击扣款条目的"对此扣款有疑问？申请退款"按钮：跳到退款申请页
   onOpenRefundApply(e) {
     const otn = e.currentTarget.dataset.id;
@@ -470,8 +655,27 @@ Page({
     this.setData({ freezing: true });
 
     try {
-      // 冻结金额由后端在下单时根据系统设置算好（押金 or 押金+租金），存在 o.freeze_amount。
-      // 历史订单无该字段则按"押金+租金"兜底（与下单时硬编码逻辑一致）。
+      // 已发起过授权的订单先对账。授权已成功但租金转支付失败时只查询状态，
+      // 不会再次扣租金，也绝不再给用户创建第二笔押金授权。
+      if (Number(o.alipay_freeze_attempts || 0) > 0) {
+        my.showLoading({ content: '核对授权与租金', mask: true });
+        const existing = await post('/api/alipay/credit/query', { out_order_no: o.id });
+        my.hideLoading();
+        if (existing && existing.is_frozen) {
+          if (existing.rent_captured) {
+            my.alert({ title: '下单成功', content: '租金已支付，押金授权已生效，订单已进入待发货' });
+          } else {
+            my.alert({
+              title: '租金结算未完成',
+              content: '押金授权已成功，但首期租金尚未结清。系统不会自动重复扣款，请等待客服联系处理。',
+            });
+          }
+          await this.loadOrder(o.id);
+          return;
+        }
+      }
+      // 方案 A：新订单一次授权“押金+租金”；授权成功后后端会
+      // 立即把租金转为实际支付，只保留押金担保，用户无需第二次验证。
       const includesRent = o.freeze_includes_rent !== false;
       const freezeAmount = Number(o.freeze_amount || 0)
         || (Number(o.deposit_freeze || 0) + (includesRent ? Number(o.amount || 0) : 0));
@@ -489,7 +693,7 @@ Page({
       });
       my.hideLoading();
 
-      const paid = await this._tradePay(r.order_str);
+      const paid = await this._tradePay(r.order_str, true);
       if (!paid) { my.showToast({ content: '已取消', type: 'none' }); return; }
 
       // 确认结果：后端按支付宝返回的 payment_method 判定免押/押金并落库，
@@ -499,10 +703,15 @@ Page({
       my.hideLoading();
       // tradePay 的 9000/6004 只代表收银台关闭，不代表冻结成功（无免押额度的
       // 用户可能授权失败退出）；以后端对账出的 is_frozen 为准
-      if (q && q.is_frozen) {
+      if (q && q.is_frozen && q.rent_captured) {
         my.alert({
           title: q.is_credit ? '免押成功' : '押金冻结成功',
-          content: '订单已进入待发货，将尽快安排出库',
+          content: '租金已支付，押金授权已生效，订单已进入待发货',
+        });
+      } else if (q && q.is_frozen) {
+        my.alert({
+          title: '租金结算未完成',
+          content: '押金授权已成功，但首期租金未确认到账，暂不会发货。系统不会自动重复扣款，请等待客服联系处理。',
         });
       } else {
         my.alert({
@@ -517,10 +726,9 @@ Page({
       this.setData({ freezing: false });
     }
   },
-  _tradePay(orderStr) {
+  _tradePay(payToken, isAuthOrder = false) {
     return new Promise((resolve) => {
-      my.tradePay({
-        orderStr,
+      const opts = {
         success: (r) => {
           // 全打出来：r.resultCode / r.memo / r.result (含 subCode/subMsg)
           console.log('[freeze][tradePay success]', JSON.stringify(r));
@@ -530,7 +738,12 @@ Page({
           console.error('[freeze][tradePay fail]', JSON.stringify(err));
           resolve(false);
         },
-      });
+      };
+      // 普通小程序支付用 tradeNO；押金预授权 freeze 仍是支付宝
+      // 返回的签名 orderStr，两种凭证不能混用。
+      if (isAuthOrder) opts.orderStr = payToken;
+      else opts.tradeNO = payToken;
+      my.tradePay(opts);
     });
   },
   // -------------------- 底部按钮 --------------------

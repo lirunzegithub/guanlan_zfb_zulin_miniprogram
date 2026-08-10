@@ -138,6 +138,18 @@
 }
 
 .o-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14rpx; }
+/* SKU 名快照标签，跟在商品名后面 */
+.o-sku {
+  display: inline-block;
+  margin-left: 10rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 6rpx;
+  background: #eef4ff;
+  color: #2f5d9e;
+  font-size: 22rpx;
+  font-weight: 500;
+}
+
 .o-name {
   font-size: 28rpx;
   color: #1a1f2e;

@@ -70,8 +70,8 @@
   padding: 12rpx 0 18rpx;
   border-bottom: 1rpx solid var(--line);
 }
-.cny { color: #ff2d2d; font-size: 28rpx; font-weight: 700; }
-.price { color: #ff2d2d; font-size: 56rpx; font-weight: 800; line-height: 1; }
+.cny { color: #ff2d2d; font-size: 28rpx; font-weight: 400; }
+.price { color: #ff2d2d; font-size: 52rpx; font-weight: 400; line-height: 1; }
 .unit { color: #ff2d2d; font-size: 24rpx; margin-left: 8rpx; }
 
 /* 标题卡 */
@@ -79,118 +79,16 @@
 .t-sub { font-size: 24rpx; color: #6b7280; margin-top: 8rpx; }
 .t-tip { font-size: 22rpx; color: #ff2d2d; margin-top: 10rpx; }
 
-/* 折线图卡 */
-.chart-head { display: flex; align-items: baseline; justify-content: space-between; }
-.chart-title { font-size: 28rpx; font-weight: 700; color: #1a1f2e; }
-.chart-min { font-size: 24rpx; color: #ff2d2d; font-weight: 700; }
-.chart {
-  display: flex;
-  margin-top: 24rpx;
-  height: 340rpx;
+/* 已选规格入口行（正文只读展示，点开抽屉去改） */
+.sku-entry {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20rpx;
 }
-.chart-y {
-  display: flex;
-  flex-direction: column-reverse;
-  justify-content: space-between;
-  font-size: 20rpx;
-  color: #9aa4b2;
-  padding-right: 12rpx;
-  height: 100%;
-}
-.chart-area {
-  flex: 1;
-  position: relative;
-  height: 100%;
-}
-.grid-line {
-  position: absolute;
-  left: 0; right: 0;
-  height: 1rpx;
-  background: #eef1f6;
-}
-.curve {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-}
-/* 折线段：起点位于 (left%, bottom%)，width 是相邻两点欧氏像素距离，
-   旋转角度由 JS 算（CSS 顺时针为正），transform-origin 锚在左中线 */
-.seg {
-  position: absolute;
-  height: 3rpx;
-  background: var(--primary);
-  transform-origin: 0 50%;
-  -webkit-transform-origin: 0 50%;
-  z-index: 2;
-}
-/* dot 点击区：56rpx 命中区域，中心对齐到 (left%, bottom%) */
-.dot-hit {
-  position: absolute;
-  width: 56rpx;
-  height: 56rpx;
-  transform: translate(-50%, 50%);
-  -webkit-transform: translate(-50%, 50%);
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.dot {
-  width: 14rpx; height: 14rpx;
-  border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 0 4rpx rgba(43,124,255,0.15);
-  transition: 0.15s;
-}
-.dot.active {
-  width: 20rpx; height: 20rpx;
-  background: #fff;
-  box-shadow: 0 0 0 5rpx var(--primary), 0 0 0 9rpx rgba(43,124,255,0.18);
-}
-/* tooltip：dot 上方浮层 */
-.tip {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  -webkit-transform: translate(-50%, -100%);
-  margin-bottom: 24rpx;
-  padding: 10rpx 16rpx;
-  background: rgba(26,31,46,0.92);
-  color: #fff;
-  border-radius: 10rpx;
-  font-size: 22rpx;
-  line-height: 1.5;
-  z-index: 5;
-  white-space: nowrap;
-  pointer-events: none;
-}
-.tip::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -10rpx;
-  transform: translateX(-50%);
-  -webkit-transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 10rpx 7rpx 0 7rpx;
-  border-color: rgba(26,31,46,0.92) transparent transparent transparent;
-}
-.tip-line { display: block; }
-.tip-price { font-weight: 700; color: #ffd166; }
-.chart-x {
-  position: absolute;
-  left: 0; right: 0; bottom: -36rpx;
-  height: 30rpx;
-  font-size: 18rpx;
-  color: #9aa4b2;
-}
-.chart-x-tick {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  -webkit-transform: translateX(-50%);
-  white-space: nowrap;
+.sku-entry-l { display: flex; flex-direction: column; gap: 8rpx; min-width: 0; }
+.sku-entry-k { font-size: 28rpx; font-weight: 700; color: #1a1f2e; }
+.sku-entry-v {
+  font-size: 24rpx; color: #6b7280;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* 规格/发货/活动 */
@@ -212,60 +110,18 @@
   font-size: 26rpx;
   color: #1a1f2e;
 }
-.info-v.multi { flex-direction: column; align-items: stretch; gap: 8rpx; }
 .ph { color: #c5cdd9; }
 .arrow { color: #c5cdd9; font-size: 32rpx; }
 
-/* 分段租金行：每段一行 "第 1-6 天 ……… ¥75 /天"，左标签 + 右价格 */
-.tier-line {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 6rpx 0;
-  font-size: 24rpx;
-}
-.tier-line + .tier-line {
-  border-top: 1rpx dashed #eef1f6;
-}
-.tier-range { color: #4a5060; }
-.tier-price { color: #ff2d2d; font-weight: 700; font-size: 26rpx; }
 .rights-row {
   display: flex;
-  justify-content: space-between;
-  padding: 20rpx 0 4rpx;
+  gap: 24rpx;
+  padding: 22rpx 0 4rpx;
   border-top: 1rpx solid var(--line);
 }
 .right-item {
-  display: flex; align-items: center; gap: 8rpx;
-  font-size: 22rpx; color: #4a5060;
-}
-.r-ico {
-  width: 32rpx; height: 32rpx;
-  border-radius: 50%;
-  position: relative;
-}
-.r-shield { background: var(--primary); }
-.r-shield::after {
-  content:'✓'; position: absolute; inset: 0;
-  color:#fff; font-size: 20rpx; font-weight: 800;
-  display: flex; align-items: center; justify-content: center;
-}
-.r-v { background: #18b07b; }
-.r-v::after {
-  content:'V'; position: absolute; inset: 0;
-  color:#fff; font-size: 18rpx; font-weight: 800;
-  display: flex; align-items: center; justify-content: center;
-  transform: scaleX(0.8);
-}
-.r-bolt { background: #ff8a00; }
-.r-bolt::after {
-  content:'⚡'; position: absolute; inset: 0;
-  color:#fff; font-size: 22rpx;
-  display: flex; align-items: center; justify-content: center;
-}
-.r-tel { background: #5a7cff; }
-.r-tel::after {
-  content:'☎'; position: absolute; inset: 0;
-  color:#fff; font-size: 22rpx;
-  display: flex; align-items: center; justify-content: center;
+  font-size: 22rpx;
+  color: #6b7280;
 }
 
 /* 发货说明 */
@@ -600,52 +456,8 @@
   align-items: center;
   padding: 0 24rpx;
 }
-.agree-row {
-  display: flex; align-items: center; gap: 10rpx;
-  padding: 16rpx 28rpx;
-  border-bottom: 1rpx solid var(--line);
-  font-size: 22rpx;
-  color: #6b7280;
-}
-.agree-check {
-  width: 28rpx; height: 28rpx;
-  border: 3rpx solid #c5cdd9;
-  border-radius: 50%;
-  background: #fff;
-  flex-shrink: 0;
-}
-.agree-check.on {
-  background: var(--primary);
-  border-color: var(--primary);
-  position: relative;
-}
-.agree-check.on::after {
-  content: '';
-  position: absolute;
-  left: 6rpx; top: 2rpx;
-  width: 7rpx; height: 14rpx;
-  border-right: 3rpx solid #fff;
-  border-bottom: 3rpx solid #fff;
-  transform: rotate(45deg);
-}
-.agree-text { color: #6b7280; }
-.agree-link { color: var(--primary); }
+/* 协议勾选样式已随该行一起移至确认订单页 */
 
-/* 未勾协议点下单时：整行抖动 + 复选框/文案高亮，替代打断式弹窗 */
-.agree-row.shake {
-  animation: agreeShake 0.5s cubic-bezier(.36,.07,.19,.97) both;
-}
-.agree-row.shake .agree-check {
-  border-color: #ff3b30;
-  box-shadow: 0 0 0 4rpx rgba(255,59,48,0.18);
-}
-.agree-row.shake .agree-text { color: #ff3b30; }
-@keyframes agreeShake {
-  10%, 90% { transform: translateX(-2rpx); }
-  20%, 80% { transform: translateX(4rpx); }
-  30%, 50%, 70% { transform: translateX(-8rpx); }
-  40%, 60% { transform: translateX(8rpx); }
-}
 /* 底部分享 / 收藏（替换原来的 首页 / 客服） */
 .bb-act {
   width: 96rpx;
@@ -700,31 +512,16 @@
   color: #fff;
   border-radius: 42rpx;
   display: flex; align-items: center; justify-content: center;
-  gap: 10rpx;
-  box-shadow: 0 8rpx 20rpx rgba(43,124,255,0.3);
-  transition: 0.15s;
-}
-/* 库存售罄态：灰底、无 LOGO、不可点感 */
-.bb-rent.sold-out {
-  background: #c5cdd9;
-  box-shadow: none;
   font-size: 30rpx;
   font-weight: 700;
   letter-spacing: 2rpx;
+  box-shadow: 0 8rpx 20rpx rgba(43,124,255,0.3);
+  transition: 0.15s;
 }
-.bb-rent-logo {
-  width: 32rpx; height: 32rpx;
-  display: block;
-  flex-shrink: 0;
-  /* 蓝底反白 LOGO：保持品牌识别 + 高对比 */
-  filter: brightness(0) invert(1);
-  -webkit-filter: brightness(0) invert(1);
-}
-.bb-rent-brand {
-  color: #fff;
-  font-size: 28rpx;
-  font-weight: 700;
-  letter-spacing: 1rpx;
+/* 库存售罄态：灰底、不可点感 */
+.bb-rent.sold-out {
+  background: #c5cdd9;
+  box-shadow: none;
 }
 .bb-rent.disabled {
   background: #c5d2e6;
@@ -741,9 +538,13 @@
 }
 @keyframes rsFade { from { opacity: 0; } to { opacity: 1; } }
 
+/* 抽屉定高：中间 .rs-body 靠 flex:1 拿到确定高度才滚得动
+   （高度 auto 时 flex:1 会塌成 0，scroll-view 也就不滚）。
+   收起日历时矮一些，展开时给日历更多空间。 */
 .rent-sheet {
+  position: relative;
   width: 100%;
-  height: 88vh;
+  height: 76vh;
   background: #fff;
   border-radius: 32rpx 32rpx 0 0;
   box-shadow: 0 -12rpx 40rpx rgba(15, 22, 40, 0.12);
@@ -757,53 +558,114 @@
 }
 
 /* ----- 顶部标题 ----- */
-.cal-head {
-  position: relative;
-  padding: 28rpx 32rpx 16rpx;
-  text-align: center;
-}
-.cal-title {
-  font-size: 32rpx; font-weight: 700; color: #1a1f2e;
-}
+/* 头部只剩关闭按钮：给一个固定高度，否则内容为空时会塌陷、
+   绝对定位的 × 会盖到下方商品摘要上 */
+/* 关闭按钮浮在抽屉右上角（原来它独占一行 76rpx，其余全是空白）。
+   z-index 压过滚动内容，摘要区用 padding-right 给它让位。 */
 .cal-close {
-  position: absolute; right: 16rpx; top: 20rpx;
-  width: 60rpx; height: 60rpx;
-  line-height: 56rpx; text-align: center;
-  font-size: 44rpx; color: #9aa4b2;
+  position: absolute; right: 14rpx; top: 10rpx;
+  z-index: 10;
+  width: 64rpx; height: 64rpx;
+  line-height: 60rpx; text-align: center;
+  font-size: 42rpx; color: #9aa4b2;
 }
 .cal-close:active { color: #1a1f2e; }
-.cal-sub {
-  margin-top: 8rpx;
-}
-.cal-sub-line {
-  font-size: 22rpx; color: #ff8a3d;
-}
-.cal-sub-locked { color: #2b7cff; display: block; margin-top: 4rpx; }
 
-/* ----- 快捷天数预设 ----- */
-.cal-presets {
-  white-space: nowrap;
-  padding: 8rpx 24rpx 16rpx;
+/* ----- 抽屉顶部：商品摘要（当前规格 + 当前租期的价格） -----
+   它在 .rs-body 之外，是抽屉的固定头部：flex-shrink:0 防止被滚动区压扁，
+   底部一条细分割线标出「固定区 / 滚动区」的边界。 */
+.rs-summary {
+  display: flex; align-items: center; gap: 18rpx;
+  padding: 24rpx 84rpx 18rpx 28rpx;
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 2rpx solid #f0f3f8;
 }
-.cal-presets-row {
-  display: inline-flex;
+.rs-thumb {
+  width: 112rpx; height: 112rpx;
+  border-radius: 16rpx;
+  background: #f4f7fb;
+  flex-shrink: 0;
+}
+.rs-thumb-ph { border: 2rpx dashed #dfe5ee; }
+.rs-sum-body { flex: 1; min-width: 0; }
+/* 价格：¥ / 数字 / 单位 同字号同字重，不加粗（对齐参考稿的清爽观感） */
+.rs-price { display: flex; align-items: baseline; }
+.rs-price-cny,
+.rs-price-num,
+.rs-price-unit {
+  font-size: 34rpx;
+  color: #ff2d2d;
+  font-weight: 400;
+}
+.rs-sum-sub { display: block; font-size: 23rpx; color: #6b7280; margin-top: 6rpx; }
+.rs-sum-dep { display: block; font-size: 21rpx; color: #9aa4b2; margin-top: 2rpx; }
+
+/* ----- 抽屉内区块标题 ----- */
+.rs-block { padding: 0; }
+.rs-sec-title {
+  display: block;
+  font-size: 27rpx; font-weight: 700; color: #1a1f2e;
+  margin: 0 28rpx 16rpx;
+}
+.rs-sec-title--pad { margin-top: 12rpx; }
+
+/* ----- 规格套餐列表：不再自己滚动（跟 .rs-body 一起滚），套餐多少都不会被裁 ----- */
+.rs-sku-item {
+  display: flex; align-items: center; justify-content: space-between;
   gap: 14rpx;
-  padding-right: 24rpx;
+  margin: 0 28rpx 16rpx;
+  padding: 22rpx 24rpx;
+  border-radius: 14rpx;
+  border: 2rpx solid transparent;
+  background: #f4f5f7;
 }
-.cal-preset {
-  display: inline-block;
-  padding: 12rpx 28rpx;
-  border-radius: 30rpx;
-  background: #f4f5f8;
-  color: #4a5060;
-  font-size: 24rpx;
-  font-weight: 600;
-  line-height: 1;
+.rs-sku-l { display: flex; flex-direction: column; gap: 6rpx; min-width: 0; }
+/* 套餐名常常很长（"【音画全能】全能版(标配+增广镜+补光灯+DJI Mic3)"），
+   限死两行，避免单个条目把整块撑高 */
+.rs-sku-name {
+  font-size: 24rpx; font-weight: 400; color: #1a1f2e;
+  line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.cal-preset.on {
-  background: linear-gradient(90deg, #ff5b5b, #ff2d2d);
-  color: #fff;
-  box-shadow: 0 4rpx 12rpx rgba(255, 45, 45, 0.22);
+.rs-sku-item.on { background: #fff; border-color: var(--primary); }
+.rs-sku-item.on .rs-sku-name { color: var(--primary); }
+/* 无货规格仍可点选（选中后顶部摘要会显示它的价格），只做视觉弱化 + 角标 */
+.rs-sku-item.out { opacity: 0.55; }
+.rs-sku-out {
+  flex-shrink: 0;
+  padding: 4rpx 12rpx;
+  border-radius: 20rpx;
+  background: #e7eaf0;
+  color: #6b7280;
+  font-size: 20rpx;
+}
+
+/* ----- 租期档位 ----- */
+/* 换行网格：横向滚动放不下时会把末尾的「自选租期」推出屏幕外
+   （用户反馈"看不到自选租期"就是这么来的） */
+.cal-presets {
+  display: flex; flex-wrap: wrap;
+  gap: 16rpx;
+  padding: 0 28rpx 4rpx;
+}
+/* 未选中：浅灰填充、无描边；选中：白底 + 主色描边 + 主色文字 */
+.cal-chip {
+  min-width: 150rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 12rpx;
+  border: 2rpx solid transparent;
+  background: #f4f5f7;
+  color: #1a1f2e;
+  font-size: 25rpx;
+  line-height: 1.2;
+  text-align: center;
+}
+.cal-chip.on {
+  background: #fff;
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 /* ----- 星期标签 ----- */
@@ -823,10 +685,16 @@
 }
 
 /* ----- 滚动区 ----- */
-.cal-scroll {
+/* 抽屉中间的唯一滚动区：规格 / 租期 / 日历都在这里滚
+   （摘要已提到滚动区外做固定头部，这里补回它原先带来的顶部间距） */
+.rs-body {
   flex: 1;
+  min-height: 0;
   background: #fff;
+  padding-top: 24rpx;
 }
+.rent-sheet.has-cal { height: 90vh; }
+.cal-body { background: #fff; }
 /* 手选关闭：日历整块降透明度示意"只读"，选中区间仍可见（由快捷预设驱动） */
 .cal-scroll--locked { opacity: 0.55; }
 .cal-month-label {
@@ -897,14 +765,16 @@
 .cal-cell--mid .cal-price { color: #8a6a00; }
 .cal-cell--mid .cal-price.is-ship { color: #cc6f00; }
 
-/* 物流期方块：整格独立配色（淡蓝），与选区的黄色明显区分 */
-.cal-cell.is-ship.cal-cell--mid {
+/* 物流期方块：整格独立配色（淡蓝），与选区的黄色明显区分。
+   物流期的第一天就是发货日（status=start/start-only），它也要是蓝的——
+   所以这里只挂 .is-ship，不再限定 .cal-cell--mid，靠双类选择器压过上面的黄色。 */
+.cal-cell.is-ship {
   background: #e7f1ff;
 }
-.cal-cell.is-ship.cal-cell--mid .cal-day {
+.cal-cell.is-ship .cal-day {
   color: #1f63d6;
 }
-.cal-cell.is-ship.cal-cell--mid .cal-price {
+.cal-cell.is-ship .cal-price {
   color: #2b7cff;
   font-weight: 700;
 }
@@ -922,6 +792,20 @@
 }
 .cal-cell.end-disabled .cal-day { color: #b9c0cd; }
 .cal-cell.end-disabled:not(.is-ship) .cal-price { color: #c8ced8; }
+
+/* 起租日（物流期后的第一天、开始计费那天）：和归还日一样的深黄，
+   让「蓝色物流段 → 深黄起租 → 浅黄用机 → 深黄归还」一眼分得开。
+   放在 end-disabled 之后，是为了在「只选了发货日、归还日待选」的状态下，
+   这一格仍然是深黄的起点，而不是被条纹态压成灰色。 */
+.cal-cell.is-rent-start {
+  background: #ffd944;
+}
+.cal-cell.is-rent-start .cal-day {
+  color: #1a1f2e; font-weight: 800;
+}
+.cal-cell.is-rent-start .cal-price {
+  color: #5d4500; font-weight: 600;
+}
 
 /* "最早可还"角标 + 高亮 */
 .cal-tag--earliest {
@@ -948,7 +832,8 @@
 /* ----- 底部汇总 + 确认 ----- */
 .cal-foot {
   position: relative;
-  padding: 16rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+  flex-shrink: 0;
+  padding: 14rpx 28rpx calc(18rpx + env(safe-area-inset-bottom));
   background: #fff;
   border-top: 1rpx solid #eef1f6;
 }
@@ -1000,93 +885,39 @@
   font-size: 22rpx; line-height: 1.5;
   color: rgba(255,255,255,0.92);
 }
-.cal-foot-info {
-  padding: 6rpx 0 4rpx;
-}
-.cal-range {
-  display: flex; align-items: center; gap: 14rpx;
-  margin-bottom: 12rpx;
-}
-.cal-range-l { font-size: 26rpx; color: #1a1f2e; font-weight: 600; }
-.cal-range-arr { color: var(--primary); font-size: 22rpx; }
-.cal-meta {
-  display: flex; gap: 12rpx; flex-wrap: wrap;
-}
-.cal-meta-pill {
-  font-size: 22rpx;
-  padding: 4rpx 14rpx;
-  border-radius: 6rpx;
-  line-height: 1.6;
-}
-.cal-meta-ship  { background: #fff4e6; color: #ff8a3d; }
-.cal-meta-rent  { background: #fff5f5; color: var(--primary); }
-.cal-meta-saved { background: #ebfaf2; color: #18b07b; }
 
-.cal-foot-tip {
-  text-align: center;
-  font-size: 24rpx; color: #9aa4b2;
-  padding: 16rpx 0;
-}
 
-.cal-foot-action {
-  display: flex; align-items: center; gap: 16rpx;
-  margin-top: 12rpx;
+/* 送达提示条：通栏横条——左右贴边、不带圆角，紧贴确认按钮区上沿。
+   带圆角+左右留白会让它看起来像个可点的按钮，实际它只是条说明。
+   芝麻信用品牌表达由详情页顶部的 .zhima-bar 与确认订单页承担，这里不重复。 */
+.cal-hint-bar {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  gap: 10rpx;
+  padding: 18rpx 24rpx;
+  background: #eaf1fe;
 }
-.cal-total-wrap {
-  display: flex; flex-direction: column;
-  align-items: flex-start;
-  min-width: 240rpx;
+/* 闪电图标用 CSS 画：Unicode ⚡ 在 iOS 会渲染成黄色彩色 emoji，
+   跟这里的蓝色文案对不上，也无法着色 */
+.cal-hint-ico {
+  width: 18rpx; height: 26rpx;
+  flex-shrink: 0;
+  background: var(--primary);
+  clip-path: polygon(62% 0%, 16% 58%, 44% 58%, 38% 100%, 84% 42%, 56% 42%);
+  -webkit-clip-path: polygon(62% 0%, 16% 58%, 44% 58%, 38% 100%, 84% 42%, 56% 42%);
 }
-.cal-total-label {
-  font-size: 22rpx; color: #9aa4b2;
-}
-.cal-total-num {
-  font-size: 44rpx; font-weight: 800; color: var(--primary);
-  line-height: 1.1;
-}
-.cal-total-sub {
-  font-size: 20rpx; color: #9aa4b2;
-  margin-top: 4rpx;
-}
-/* 主下单按钮（合规：多行版 = 场景表达 + LOGO + 完整版"芝麻信用｜免押金"）
-   底色用芝麻信用品牌蓝，文字白色保持高对比 */
+.cal-hint-text { font-size: 23rpx; color: #3d6fc4; }
+
+/* 主确认按钮：全宽单行（与「规格选择弹层」的视觉一致） */
 .cal-confirm {
-  flex: 1;
-  min-height: 112rpx;
-  padding: 14rpx 24rpx;
-  border-radius: 56rpx;
+  height: 96rpx;
+  border-radius: 48rpx;
   background: linear-gradient(90deg, #3D8DFB, #2B7CFF);
   color: #fff;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 4rpx;
-  box-shadow: 0 8rpx 20rpx rgba(43, 124, 255, 0.32);
-}
-.cal-confirm-main {
-  font-size: 30rpx;
-  font-weight: 700;
+  font-size: 32rpx; font-weight: 700;
   letter-spacing: 2rpx;
-  line-height: 1.2;
-}
-.cal-confirm-sub {
-  display: inline-flex; align-items: center; gap: 6rpx;
-  background: rgba(255, 255, 255, 0.18);
-  padding: 2rpx 14rpx 2rpx 10rpx;
-  border-radius: 999rpx;
-}
-.cal-confirm-logo {
-  width: 22rpx; height: 22rpx;
-  display: block;
-  flex-shrink: 0;
-  /* 反白：原 LOGO 是蓝色，按在蓝底上不够对比；用 brightness+invert 让它显白 */
-  filter: brightness(0) invert(1);
-  -webkit-filter: brightness(0) invert(1);
-}
-.cal-confirm-brand {
-  color: #fff;
-  font-size: 20rpx;
-  font-weight: 700;
-  letter-spacing: 0.5rpx;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8rpx 20rpx rgba(43, 124, 255, 0.32);
 }
 .cal-confirm:active { opacity: .88; }
 .cal-confirm.disabled {
@@ -1094,7 +925,6 @@
   color: #fff;
   box-shadow: none;
 }
-.cal-confirm.disabled .cal-confirm-sub { background: rgba(255, 255, 255, 0.25); }
 
 /* ============ 自定义分享抽屉 ============ */
 .share-mask {
@@ -1303,78 +1133,4 @@
 .cp-mini-state.mute  { background: #eef1f6; color: #9aa4b2; }
 .cp-mini-state.act   { background: linear-gradient(135deg,#ff7e3a,#f0560b); color:#ffffff; }
 
-/* ========== 租期抽屉里的优惠券行 ========== */
-.cal-coupon-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16rpx 32rpx;
-  background: #fff8ee;
-  border-top: 1rpx solid #f3eadd;
-  border-bottom: 1rpx solid #f3eadd;
-  margin-top: 12rpx;
-}
-.cal-coupon-label { font-size: 26rpx; color: #6b7280; }
-.cal-coupon-value { display: flex; align-items: center; gap: 8rpx; max-width: 60%; }
-.cal-coupon-on   { color: #f0560b; font-weight: 600; font-size: 26rpx; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cal-coupon-tip  { font-size: 24rpx; color: #f0560b; }
-.cal-coupon-tip.mute { color: #9aa4b2; }
-.cal-coupon-arr  { color: #cdd1d8; font-size: 28rpx; }
-
-.cal-total-orig {
-  display: block;
-  font-size: 20rpx;
-  color: #9aa4b2;
-  text-decoration: line-through;
-  margin-top: 2rpx;
-}
-
-/* ========== 优惠券选择抽屉 ========== */
-.coupon-mask {
-  position: fixed; inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  z-index: 50;
-  display: flex; align-items: flex-end;
-}
-.coupon-sheet {
-  width: 100%;
-  max-height: 70vh;
-  background: #ffffff;
-  border-radius: 24rpx 24rpx 0 0;
-  display: flex; flex-direction: column;
-  padding-bottom: env(safe-area-inset-bottom);
-}
-.coupon-sheet-h {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 28rpx 32rpx;
-  border-bottom: 1rpx solid #eef1f6;
-}
-.coupon-sheet-title { font-size: 30rpx; font-weight: 700; }
-.coupon-sheet-close { font-size: 40rpx; color: #9aa4b2; line-height: 1; padding: 0 8rpx; }
-.coupon-sheet-list { flex: 1; padding: 8rpx 0 24rpx; }
-.coupon-pick-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 24rpx 32rpx;
-  border-bottom: 1rpx solid #f3f5f8;
-}
-.coupon-pick-item.on { background: #fff8ee; }
-.cpi-l { flex: 1; min-width: 0; }
-.cpi-name { font-size: 28rpx; color: #1a1f2e; font-weight: 600; }
-.cpi-meta { font-size: 22rpx; color: #9aa4b2; margin-top: 4rpx; }
-.cpi-radio {
-  width: 36rpx; height: 36rpx;
-  border-radius: 50%;
-  border: 2rpx solid #cdd1d8;
-  position: relative;
-  flex: 0 0 auto;
-}
-.cpi-radio.on {
-  border-color: #f0560b;
-  background: #f0560b;
-}
-.cpi-radio.on::after {
-  content: ''; position: absolute;
-  left: 50%; top: 50%;
-  width: 14rpx; height: 8rpx;
-  border-left: 4rpx solid #ffffff;
-  border-bottom: 4rpx solid #ffffff;
-  transform: translate(-50%, -65%) rotate(-45deg);
-}
+/* 抽屉内的选券行与选券抽屉样式已随功能一起移至确认订单页 */

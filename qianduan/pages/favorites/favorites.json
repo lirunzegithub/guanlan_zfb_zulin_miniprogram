@@ -1,5 +1,6 @@
 {
   "defaultTitle": "我的收藏",
   "titleBarColor": "#ffffff",
-  "backgroundColor": "#f4f7fb"
+  "backgroundColor": "#f4f7fb",
+  "usingComponents": { "smart-image": "/components/smart-image/smart-image" }
 }

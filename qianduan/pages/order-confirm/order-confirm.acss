@@ -1,0 +1,397 @@
+.page { min-height: 100vh; padding: 20rpx 24rpx 0; }
+.card { margin-bottom: 20rpx; }
+.arr { color: #c5cdd9; font-size: 32rpx; flex-shrink: 0; }
+
+.sec-title {
+  font-size: 30rpx; font-weight: 700; color: var(--text);
+  margin-bottom: 22rpx;
+}
+/* 带右侧附注的标题行（如「租赁日期 —— 租期共 7 天」） */
+.sec-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 22rpx;
+}
+.sec-title--flush { margin-bottom: 0; }
+.sec-extra {
+  font-size: 24rpx; color: var(--primary);
+  background: var(--primary-soft);
+  padding: 4rpx 16rpx; border-radius: 20rpx;
+}
+/* 卡片标题右侧的金额（「实付租金 ¥323」） */
+.sec-amt { font-size: 34rpx; color: #ff3b30; font-weight: 400; }
+/* 押金那张卡：金额是"冻结额"不是"实付"，弱化成次要色，别跟租金抢 */
+.sec-amt--sub { font-size: 26rpx; color: var(--text-2); }
+
+/* ---------- 致命错误态 ---------- */
+.fatal {
+  padding-top: 220rpx;
+  display: flex; flex-direction: column; align-items: center; gap: 24rpx;
+}
+.fatal-ico {
+  width: 96rpx; height: 96rpx; border-radius: 50%;
+  background: #ffe7e6; color: #ff3b30;
+  font-size: 52rpx; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.fatal-text { font-size: 28rpx; color: var(--text-2); text-align: center; padding: 0 60rpx; }
+
+/* ---------- 地址 ---------- */
+.addr-card { display: flex; align-items: center; justify-content: space-between; }
+.addr-l { display: flex; align-items: flex-start; gap: 16rpx; flex: 1; min-width: 0; }
+.addr-pin {
+  width: 30rpx; height: 30rpx; margin-top: 6rpx; flex-shrink: 0;
+  border: 4rpx solid var(--primary);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+}
+.addr-body { flex: 1; min-width: 0; }
+.addr-full {
+  font-size: 28rpx; color: var(--text); font-weight: 600; line-height: 1.45;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.addr-full.addr-empty { color: var(--primary); }
+.addr-who { font-size: 24rpx; color: var(--text-3); margin-top: 6rpx; }
+
+/* ---------- 平台严选条 ---------- */
+.picked-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: linear-gradient(90deg, #e8f1ff, #f5f9ff);
+  border-radius: 16rpx;
+  padding: 16rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.picked-brand { font-size: 26rpx; font-weight: 800; color: var(--primary); letter-spacing: 1rpx; }
+.picked-tags { font-size: 22rpx; color: #4a7fd6; }
+
+/* ---------- 商品 ---------- */
+.goods { display: flex; gap: 20rpx; }
+.goods-img {
+  width: 160rpx; height: 160rpx; border-radius: 16rpx;
+  background: #f4f7fb; flex-shrink: 0;
+}
+.goods-img-ph { border: 2rpx dashed #dfe5ee; }
+.goods-body { flex: 1; min-width: 0; }
+.goods-row1 { display: flex; align-items: flex-start; gap: 12rpx; }
+.goods-name {
+  flex: 1; min-width: 0;
+  font-size: 28rpx; color: var(--text); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.goods-qty { font-size: 24rpx; color: var(--text-3); flex-shrink: 0; }
+.goods-sel {
+  font-size: 24rpx; color: var(--text-2); line-height: 1.5;
+  margin-top: 10rpx;
+}
+.goods-chips { display: flex; flex-wrap: wrap; gap: 10rpx; margin-top: 14rpx; }
+.g-chip {
+  font-size: 20rpx; color: var(--primary);
+  background: var(--primary-soft);
+  padding: 4rpx 12rpx; border-radius: 6rpx;
+}
+.g-chip-hot { color: #ff6a00; background: #fff3e6; }
+
+/* ---------- 备注 ---------- */
+.remark-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20rpx;
+  margin-top: 24rpx; padding-top: 24rpx;
+  border-top: 1rpx solid var(--line);
+}
+.remark-label { font-size: 26rpx; color: var(--text); flex-shrink: 0; }
+.remark-val { display: flex; align-items: center; gap: 8rpx; flex: 1; min-width: 0; justify-content: flex-end; }
+.remark-ph { font-size: 24rpx; color: var(--text-3); }
+.remark-on {
+  font-size: 24rpx; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- 租赁日期时间轴 ---------- */
+.tl { padding: 4rpx 0; }
+.tl-labels, .tl-dates { display: flex; }
+.tl-lb, .tl-dt {
+  flex: 1; text-align: center;
+  font-size: 22rpx; color: var(--text-3);
+}
+.tl-lb.on { color: var(--text); font-weight: 600; }
+.tl-dt { margin-top: 16rpx; font-size: 25rpx; color: var(--text-3); }
+.tl-dt.on { color: var(--text); font-weight: 600; }
+
+.tl-track { position: relative; height: 28rpx; margin-top: 16rpx; }
+/* 整条底线贯穿首尾节点，不再被徽章打断 */
+.tl-line {
+  position: absolute; left: 12.5%; right: 12.5%; top: 50%;
+  height: 4rpx; margin-top: -2rpx;
+  background: #e6ebf3; border-radius: 2rpx;
+}
+/* 计费区间（起租 → 到期）：整段高亮，这才是这张图要传达的信息 */
+.tl-line-on {
+  position: absolute; left: 37.5%; right: 37.5%; top: 50%;
+  height: 4rpx; margin-top: -2rpx;
+  background: var(--primary); border-radius: 2rpx;
+}
+/* 两端节点：空心小点，弱化——它们只是物流的收尾 */
+.tl-dot {
+  position: absolute; top: 50%;
+  width: 12rpx; height: 12rpx; margin: -6rpx 0 0 -6rpx;
+  border-radius: 50%;
+  background: #fff;
+  border: 3rpx solid #d5dce6;
+  box-sizing: content-box;
+}
+/* 计费起止节点：主色实心 + 白环，从轴线上"浮"起来 */
+.tl-dot.on {
+  width: 12rpx; height: 12rpx; margin: -6rpx 0 0 -6rpx;
+  background: var(--primary);
+  border-color: #fff;
+  box-shadow: 0 0 0 3rpx var(--primary);
+}
+.tl-note {
+  margin-top: 24rpx; padding-top: 18rpx;
+  border-top: 1rpx solid var(--line);
+  font-size: 22rpx; color: var(--text-3); line-height: 1.5;
+}
+
+/* ---------- 费用明细 ---------- */
+/* 明细统一包在浅灰块里，与卡片标题行的结算金额区分开 */
+.fee-box {
+  background: #f7f8fa;
+  border-radius: 16rpx;
+  padding: 8rpx 20rpx;
+}
+.fee-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20rpx;
+  padding: 14rpx 0;
+}
+/* 展开层里的押金行：与上方实付租金用分隔线断开，强调它不是实付的一部分 */
+.fee-row-dep {
+  margin-top: 8rpx; padding-top: 20rpx;
+  border-top: 1rpx dashed var(--line);
+}
+/* 芝麻信用品牌行（LOGO + 完整版文案，合规要求不能只写文字） */
+.fee-k-brand { display: flex; align-items: center; gap: 8rpx; flex: 1; min-width: 0; }
+.fee-k-logo { width: 28rpx; height: 28rpx; flex-shrink: 0; }
+.fee-k-zmxy { font-size: 24rpx; color: var(--primary); font-weight: 600; }
+.fee-k { font-size: 26rpx; color: var(--text-2); flex: 1; min-width: 0; }
+.fee-v { font-size: 26rpx; color: var(--text); font-weight: 400; flex-shrink: 0; }
+.fee-v-wrap { display: flex; align-items: center; gap: 8rpx; flex-shrink: 0; }
+.fee-v-cut { color: #ff3b30; }
+.fee-v-tip { color: var(--primary); font-weight: 500; }
+.fee-v-mute { color: var(--text-3); font-weight: 400; }
+
+.fee-total {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-top: 16rpx; padding-top: 20rpx;
+  border-top: 1rpx solid var(--line);
+}
+.fee-total-k { font-size: 26rpx; color: var(--text); font-weight: 600; }
+.fee-total-v { font-size: 36rpx; color: #ff3b30; font-weight: 400; }
+.fee-note { font-size: 22rpx; color: var(--text-3); margin-top: 12rpx; line-height: 1.5; }
+
+/* ---------- 协议 ---------- */
+.agree-row {
+  display: flex; align-items: center; gap: 10rpx;
+  padding: 4rpx 8rpx 0;
+  font-size: 22rpx; color: #6b7280;
+}
+.agree-check {
+  width: 28rpx; height: 28rpx;
+  border: 3rpx solid #c5cdd9;
+  border-radius: 50%;
+  background: #fff;
+  flex-shrink: 0;
+}
+.agree-check.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  position: relative;
+}
+.agree-check.on::after {
+  content: '';
+  position: absolute;
+  left: 6rpx; top: 2rpx;
+  width: 7rpx; height: 14rpx;
+  border-right: 3rpx solid #fff;
+  border-bottom: 3rpx solid #fff;
+  transform: rotate(45deg);
+}
+.agree-text { color: #6b7280; }
+.agree-link { color: var(--primary); }
+/* ---------- 底部下单条 ---------- */
+.bottom-bar {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  background: #fff;
+  box-shadow: 0 -4rpx 24rpx rgba(26, 31, 46, 0.06);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 24rpx;
+  padding: 18rpx 28rpx;
+  z-index: 60;
+}
+.bb-l { flex: 1; min-width: 0; }
+.bb-amt { display: flex; align-items: baseline; gap: 4rpx; }
+.bb-amt .bb-caret { align-self: center; }
+.bb-amt-label { font-size: 24rpx; color: var(--text-2); margin-right: 4rpx; }
+.bb-amt-cny { font-size: 24rpx; color: #ff3b30; font-weight: 400; }
+.bb-amt-num { font-size: 38rpx; color: #ff3b30; font-weight: 400; }
+/* 展开箭头用 border 画三角：原来用字符 ⌄，在 baseline 对齐的行里
+   会掉到数字下方去，位置怎么调都不对 */
+.bb-caret {
+  width: 0; height: 0;
+  margin-left: 8rpx;
+  align-self: center;
+  border-left: 9rpx solid transparent;
+  border-right: 9rpx solid transparent;
+  border-top: 10rpx solid #9aa4b2;
+  transition: transform 0.2s;
+}
+.bb-caret.up { transform: rotate(180deg); }
+.bb-sub { font-size: 20rpx; color: var(--text-3); }
+.bb-submit {
+  width: 280rpx; height: 88rpx; flex-shrink: 0;
+  border-radius: 44rpx;
+  background: linear-gradient(90deg, #4d8dff, #2b7cff);
+  color: #fff; font-size: 30rpx; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8rpx 20rpx rgba(43, 124, 255, 0.3);
+}
+.bb-submit.is-busy { opacity: 0.6; }
+
+/* ---------- 通用弹层 ---------- */
+.mask {
+  position: fixed; left: 0; right: 0; top: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  display: flex; align-items: flex-end;
+}
+.pop, .fee-pop {
+  width: 100%;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 28rpx 32rpx;
+  max-height: 78vh;
+}
+.pop-h {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+.pop-title { font-size: 30rpx; font-weight: 700; color: var(--text); }
+.pop-close { font-size: 42rpx; color: var(--text-3); line-height: 1; padding: 0 10rpx; }
+
+/* 优惠券列表 */
+.cp-list { max-height: 56vh; }
+.cp-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20rpx;
+  padding: 24rpx 20rpx;
+  border: 2rpx solid var(--line);
+  border-radius: 16rpx;
+  margin-bottom: 16rpx;
+}
+.cp-item.on { border-color: var(--primary); background: var(--primary-soft); }
+.cp-l { flex: 1; min-width: 0; font-size: 26rpx; color: var(--text); }
+.cp-name { font-size: 26rpx; color: #ff3b30; font-weight: 400; }
+.cp-meta { font-size: 22rpx; color: var(--text-3); margin-top: 6rpx; }
+.cp-radio {
+  width: 32rpx; height: 32rpx; flex-shrink: 0;
+  border: 3rpx solid #c5cdd9; border-radius: 50%;
+}
+.cp-radio.on { border-color: var(--primary); background: var(--primary); position: relative; }
+.cp-radio.on::after {
+  content: ''; position: absolute;
+  left: 8rpx; top: 4rpx;
+  width: 8rpx; height: 15rpx;
+  border-right: 3rpx solid #fff; border-bottom: 3rpx solid #fff;
+  transform: rotate(45deg);
+}
+
+/* 备注输入弹层：标题居中、输入区占满、字数贴框内右下、底部整宽确定按钮 */
+.remark-pop {
+  width: 100%;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 28rpx 24rpx;
+  min-height: 62vh;
+  display: flex; flex-direction: column;
+}
+.remark-h {
+  position: relative;
+  text-align: center;
+  padding: 4rpx 0 28rpx;
+}
+.remark-title { font-size: 32rpx; font-weight: 700; color: var(--text); }
+.remark-close {
+  position: absolute; right: 0; top: -4rpx;
+  width: 60rpx; height: 60rpx;
+  line-height: 56rpx; text-align: center;
+  font-size: 40rpx; color: var(--text-3);
+}
+.remark-box {
+  position: relative;
+  flex: 1;
+  background: #f7f8fa;
+  border-radius: 16rpx;
+  padding: 24rpx 24rpx 48rpx;
+}
+.remark-input {
+  width: 100%; height: 100%;
+  font-size: 28rpx; color: var(--text);
+  line-height: 1.5;
+  background: transparent;
+}
+.remark-ph-cls { color: #b6bcc7; }
+.remark-count {
+  position: absolute; right: 24rpx; bottom: 16rpx;
+  font-size: 24rpx; color: var(--text-3);
+}
+.remark-foot { padding-top: 28rpx; }
+.remark-save {
+  height: 92rpx;
+  border-radius: 46rpx;
+  background: linear-gradient(90deg, #4d8dff, #2b7cff);
+  color: #fff; font-size: 32rpx; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ---------- 协议确认弹层 ---------- */
+.agree-pop {
+  width: 100%;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 32rpx 24rpx;
+  min-height: 46vh;
+  display: flex; flex-direction: column;
+}
+.agree-pop-h {
+  position: relative;
+  text-align: center;
+  padding: 4rpx 0 32rpx;
+}
+.agree-pop-title { font-size: 32rpx; font-weight: 700; color: var(--text); }
+.agree-pop-close {
+  position: absolute; right: -8rpx; top: -4rpx;
+  width: 60rpx; height: 60rpx;
+  line-height: 56rpx; text-align: center;
+  font-size: 40rpx; color: var(--text-3);
+}
+/* 协议正文区占据中部，把按钮推到底——与参考稿一致 */
+.agree-pop-body { flex: 1; }
+.agree-pop-text { font-size: 28rpx; color: var(--text-2); }
+.agree-pop-link { font-size: 28rpx; color: var(--primary); }
+.agree-pop-foot { display: flex; gap: 24rpx; padding-top: 24rpx; }
+.agree-pop-btn {
+  flex: 1; height: 92rpx;
+  border-radius: 46rpx;
+  font-size: 30rpx; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.agree-pop-btn.ghost {
+  background: #fff; color: var(--text);
+  border: 2rpx solid #dfe3ea;
+}
+.agree-pop-btn.main {
+  background: linear-gradient(90deg, #4d8dff, #2b7cff);
+  color: #fff;
+  box-shadow: 0 8rpx 20rpx rgba(43, 124, 255, 0.3);
+}
+.agree-pop-btn.is-busy { opacity: .6; }

@@ -27,7 +27,7 @@
         </view>
         <view class="o-body">
           <view class="o-thumb">
-            <image a:if="{{item.product_cover}}" class="o-thumb-img" src="{{item.product_cover}}" mode="aspectFill" />
+            <view a:if="{{item.product_cover}}" class="o-thumb-img"><smart-image style="display:block;width:100%;height:100%" src="{{item.product_cover}}" mode="aspectFill" /></view>
             <block a:else>
               <view class="o-thumb-tag">仅限</view>
               <view class="o-thumb-tag2">「免押认证」</view>
@@ -35,7 +35,10 @@
             </block>
           </view>
           <view class="o-info">
-            <view class="o-name">{{item.product_name}}</view>
+            <view class="o-name">
+              {{item.product_name}}
+              <text a:if="{{item.sku_name}}" class="o-sku">{{item.sku_name}}</text>
+            </view>
             <view class="o-meta">租期：{{item._startDate}} ~ {{item._endDate}}</view>
             <view class="o-amount">¥{{item._amountText}} 元</view>
           </view>

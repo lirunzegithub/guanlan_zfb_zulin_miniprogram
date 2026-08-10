@@ -168,6 +168,11 @@ class BaseAlipayClient:
                        merchant_biz_type: str = "3C_RENT") -> dict:
         raise NotImplementedError
 
+    def trade_create(self, out_trade_no: str, total_amount: float,
+                     subject: str, buyer_id: str, body: str = "") -> dict:
+        """alipay.trade.create，返回给支付宝小程序 my.tradePay 的 trade_no。"""
+        raise NotImplementedError
+
     def trade_query(self, out_trade_no: Optional[str] = None,
                     trade_no: Optional[str] = None) -> dict:
         raise NotImplementedError
@@ -331,6 +336,44 @@ class RealAlipayClient(BaseAlipayClient):
         }
 
     # ------- 预授权转支付（扣款）alipay.trade.pay -------
+
+    def trade_create(self, out_trade_no, total_amount, subject, buyer_id, body=""):
+        """支付宝小程序收款：服务端创建交易，小程序端用 tradeNO 拉起收银台。
+
+        不得换回 alipay.trade.app.pay / QUICK_MSECURITY_PAY：那是独立 App
+        支付产品，小程序应用未签约时会被产品权限拦截。
+        """
+        from alipay.aop.api.request.AlipayTradeCreateRequest import AlipayTradeCreateRequest
+        from alipay.aop.api.domain.AlipayTradeCreateModel import AlipayTradeCreateModel
+
+        model = AlipayTradeCreateModel()
+        model.out_trade_no = out_trade_no
+        model.total_amount = f"{float(total_amount):.2f}"
+        model.subject = subject
+        model.buyer_id = buyer_id
+        if body:
+            model.body = body
+        req = AlipayTradeCreateRequest(biz_model=model)
+        req.notify_url = AlipayConfig.notify_url(AlipayConfig.NOTIFY_PATH_TRADE)
+        try:
+            resp = self._execute(req, "alipay_trade_create_response")
+        except RuntimeError as create_err:
+            # 重复点击、或从旧 App 支付实现切换过来时，同一
+            # out_trade_no 可能已在支付宝生成了待支付交易。主动查询并
+            # 复用它的 trade_no，避免让用户删单重下。
+            try:
+                existing = self.trade_query(out_trade_no=out_trade_no)
+                if (existing.get("trade_no") or "").strip():
+                    resp = existing
+                else:
+                    raise create_err
+            except Exception:
+                raise create_err
+        trade_no = (resp.get("trade_no") or "").strip()
+        if not trade_no:
+            raise RuntimeError("alipay.trade.create 成功响应缺少 trade_no")
+        return {"trade_no": trade_no, "out_trade_no": out_trade_no}
+
     # 信用免押产品下用 auth_no（freeze 时阿里返回的支付宝授权号）调用此接口
     # 把冻结额度里的部分转成实际支付。auth_confirm_mode:
     #   COMPLETE     —— 本次扣款后自动解冻剩余冻结金额（最后一笔用）

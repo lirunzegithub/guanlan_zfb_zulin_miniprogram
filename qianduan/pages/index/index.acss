@@ -26,6 +26,7 @@
   background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.45) 100%);
   left: 0; right: 0; bottom: 0;
   padding: 24rpx 32rpx 36rpx;
+  z-index: 2;
 }
 .hero-bg {
   position: absolute; inset: 0;

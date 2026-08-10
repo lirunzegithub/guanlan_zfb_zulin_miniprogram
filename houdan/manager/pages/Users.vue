@@ -24,7 +24,7 @@
           <td>{{ u.id }}</td>
           <td>{{ u.real_name || '-' }}</td>
           <td>{{ u.phone || '-' }}</td>
-          <td>{{ u.id_card || '-' }}</td>
+          <td>{{ u.id_card_mask || '-' }}</td>
           <td>
             <span v-if="u.verified" class="tag tag-green">已实名</span>
             <span v-else class="tag tag-gray">未实名</span>
@@ -64,7 +64,19 @@
         </div>
         <div class="field">
           <div class="label">身份证</div>
-          <input class="input" v-model="form.id_card" />
+          <template v-if="isAdmin">
+            <div v-if="!cardShown" class="row" style="gap:8px">
+              <input class="input" style="flex:1" :value="form.id_card_mask || '-'" disabled />
+              <button class="btn btn-ghost" :disabled="cardLoading" @click="revealCard">
+                {{ cardLoading ? '加载中…' : '查看 / 修改' }}
+              </button>
+            </div>
+            <input v-else class="input" v-model="form.id_card" placeholder="15 或 18 位" />
+          </template>
+          <template v-else>
+            <input class="input" :value="form.id_card_mask || '-'" disabled />
+            <div class="muted" style="margin-top:4px">完整号码仅 admin 可查看</div>
+          </template>
         </div>
         <div class="field">
           <label><input type="checkbox" v-model="form.verified" /> 已实名</label>
@@ -95,10 +107,11 @@
 </template>
 
 <script>
-const { ref, inject, onMounted } = Vue;
+const { ref, computed, inject, onMounted } = Vue;
 export default {
   setup() {
     const api = inject('api');
+    const auth = inject('auth');
     const list = ref([]);
     const loading = ref(true);
     const modal = ref(null);
@@ -106,6 +119,10 @@ export default {
     const saving = ref(false);
     const addresses = ref([]);
     const addrLoading = ref(false);
+    // 身份证明文：列表/编辑默认只有掩码，admin 点「查看 / 修改」才单独拉一次
+    const isAdmin = computed(() => auth.state.staff?.role === 'admin');
+    const cardShown = ref(false);
+    const cardLoading = ref(false);
 
     const fetch = async () => {
       loading.value = true;
@@ -115,6 +132,7 @@ export default {
 
     const openEdit = async (u) => {
       form.value = { ...u };
+      cardShown.value = false;
       modal.value = true;
       // 懒加载该用户的收货地址
       addresses.value = [];
@@ -129,10 +147,29 @@ export default {
       }
     };
 
+    const revealCard = async () => {
+      cardLoading.value = true;
+      try {
+        const r = await api.userIdCard(form.value.id);
+        form.value.id_card = r.id_card || '';
+        cardShown.value = true;
+      } catch (e) { alert(e.message); }
+      finally { cardLoading.value = false; }
+    };
+
     const save = async () => {
+      const f = form.value;
+      const body = {
+        nickname:  f.nickname,
+        phone:     f.phone,
+        real_name: f.real_name,
+        verified:  !!f.verified,
+      };
+      // 只有 admin 点开明文后才回传身份证，否则会把掩码写回库
+      if (isAdmin.value && cardShown.value) body.id_card = f.id_card || '';
       saving.value = true;
       try {
-        await api.update('users', form.value.id, form.value);
+        await api.update('users', f.id, body);
         modal.value = null;
         await fetch();
       } catch (e) { alert(e.message); }
@@ -140,7 +177,8 @@ export default {
     };
 
     onMounted(fetch);
-    return { list, loading, modal, form, saving, openEdit, save, addresses, addrLoading };
+    return { list, loading, modal, form, saving, openEdit, save, addresses, addrLoading,
+             isAdmin, cardShown, cardLoading, revealCard };
   }
 };
 </script>

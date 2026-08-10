@@ -3,7 +3,8 @@
   <block a:if="{{list.length > 0}}">
     <block a:for="{{list}}" a:key="id">
       <view class="fav-item" data-id="{{item.id}}" onTap="onGoods">
-        <view class="fav-img" style="background:{{item.bg}}"></view>
+        <view a:if="{{item.cover_url}}" class="fav-img"><smart-image style="display:block;width:100%;height:100%" src="{{item.cover_url}}" mode="aspectFill" /></view>
+        <view a:else class="fav-img"></view>
         <view class="fav-body">
           <view class="fav-name">{{item.name}}</view>
           <view class="fav-meta">
