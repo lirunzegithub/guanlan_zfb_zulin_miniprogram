@@ -51,6 +51,18 @@
 }
 .ph { color: #c5cdd9; }
 
+/* 省市区选择器行：视觉上跟 .input 对齐，右侧给个箭头暗示可点 */
+.picker {
+  flex: 1;
+  font-size: 28rpx;
+  color: #1a1f2e;
+}
+.field .arrow {
+  font-size: 30rpx;
+  color: #c5cdd9;
+  margin-left: 8rpx;
+}
+
 .default-row {
   display: flex; align-items: center; gap: 12rpx;
   padding-top: 24rpx;

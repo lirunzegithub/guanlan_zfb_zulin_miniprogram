@@ -2439,7 +2439,8 @@ def user_addresses(uid):
             "id": a.get("id"),
             "receiver_name": a.get("receiver_name") or "",
             "receiver_phone": a.get("receiver_phone") or "",
-            "full": f"{a.get('province','')} {a.get('city','')} {a.get('district','')} {a.get('detail','')}".strip(),
+            "full": " ".join(x for x in (a.get("province"), a.get("city"),
+                                         a.get("district"), a.get("detail")) if x),
             "is_default": bool(a.get("is_default")),
         })
     return ok({"list": out, "total": len(out)})

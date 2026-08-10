@@ -14,7 +14,7 @@
         <view class="addr-l">
           <view class="addr-pin"></view>
           <view class="addr-body">
-            <view class="addr-full">{{addr.province}}-{{addr.city}}-{{addr.district}}-{{addr.detail}}</view>
+            <view class="addr-full">{{addr._full}}</view>
             <view class="addr-who">{{addr.receiver_name}} {{addr.receiver_phone}}</view>
           </view>
         </view>

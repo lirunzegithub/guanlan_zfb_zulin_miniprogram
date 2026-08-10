@@ -17,6 +17,12 @@ const pricing = require('../../utils/pricing.js');
 
 const PICKED_ADDR_KEY = 'picked_address';
 
+// district 可能为空（仙桃/潜江/天门等省直管县级市），拼接时过滤掉空段
+function withFull(a) {
+  if (!a) return a;
+  return { ...a, _full: [a.province, a.city, a.district, a.detail].filter(Boolean).join(' ') };
+}
+
 Page({
   data: {
     loaded: false,
@@ -78,7 +84,7 @@ Page({
       if (picked) my.removeStorageSync({ key: PICKED_ADDR_KEY });
     } catch (e) {}
     if (picked && picked.id) {
-      this.setData({ addr: picked, addrLoaded: true });
+      this.setData({ addr: withFull(picked), addrLoaded: true });
       return;
     }
     // 首屏由 loadAll 负责；之后每次回到本页都重拉地址
@@ -171,7 +177,7 @@ Page({
       const list = (d && d.list) || [];
       // 与后端建单时的兜底一致：优先默认地址，否则第一条
       const addr = list.find((a) => a.is_default) || list[0] || null;
-      this.setData({ addr, addrLoaded: true });
+      this.setData({ addr: withFull(addr), addrLoaded: true });
     } catch (e) {
       this.setData({ addrLoaded: true });
     }

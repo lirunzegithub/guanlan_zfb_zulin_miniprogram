@@ -21,6 +21,8 @@ data/*.db-shm
 data/*.db-wal
 data/*.json
 data/*.json.migrated
+# 例外：行政区划码表是静态资源（scripts/build_regions.py 生成），需要入库随代码部署
+!data/regions.json
 
 # IDE
 .idea/

@@ -5,6 +5,11 @@ function maskPhone(p) {
   return p.slice(0, 3) + '****' + p.slice(-4);
 }
 
+// district 可能为空（仙桃/潜江/天门等省直管县级市），拼接时过滤掉空段
+function fullAddr(a) {
+  return [a.province, a.city, a.district, a.detail].filter(Boolean).join(' ');
+}
+
 // 选择模式下把选中的地址交还给上一页。用 storage 而不是 getCurrentPages()
 // 直接调上一页方法：页面栈在「新增地址→返回」这类多级返回里不总是可预期的，
 // storage 由消费方读完即删，谁在栈顶都能拿到。
@@ -27,7 +32,11 @@ Page({
   async load() {
     try {
       const d = await get('/api/user/addresses');
-      const list = (d.list || []).map((a) => ({ ...a, _phoneMasked: maskPhone(a.receiver_phone) }));
+      const list = (d.list || []).map((a) => ({
+        ...a,
+        _phoneMasked: maskPhone(a.receiver_phone),
+        _full: fullAddr(a),
+      }));
       this.setData({ list, loaded: true });
     } catch (e) {
       this.setData({ loaded: true });

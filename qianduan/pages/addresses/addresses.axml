@@ -10,7 +10,7 @@
           <text a:if="{{item.source === 'alipay'}}" class="badge alipay">支付宝</text>
           <text a:if="{{pick}}" class="pick-hint">点击选择</text>
         </view>
-        <view class="addr-detail">{{item.province}} {{item.city}} {{item.district}} {{item.detail}}</view>
+        <view class="addr-detail">{{item._full}}</view>
         <view class="actions" catchTap="noop">
           <view a:if="{{!item.is_default}}" class="act-btn" data-id="{{item.id}}" catchTap="onSetDefault">设为默认</view>
           <view class="act-btn" data-id="{{item.id}}" catchTap="onEdit">编辑</view>

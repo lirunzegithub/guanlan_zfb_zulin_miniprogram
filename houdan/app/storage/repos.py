@@ -40,6 +40,9 @@ address_repo = SqliteRepository(
     default_fields={
         "user_id": "", "receiver_name": "", "receiver_phone": "",
         "province": "", "city": "", "district": "", "detail": "",
+        # 行政区划码（GB/T 2260，见 data/regions.json）。选择器填的地址三码齐全；
+        # my.getAddress 导入和存量手输地址只有文本，码为空——所以任何逻辑都不能依赖码非空。
+        "province_code": "", "city_code": "", "district_code": "",
         "zip_code": "", "is_default": False,
         "source": "manual",
     },

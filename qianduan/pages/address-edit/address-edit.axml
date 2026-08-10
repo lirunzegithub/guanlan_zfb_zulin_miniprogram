@@ -27,9 +27,15 @@
              type="number" maxlength="11"
              value="{{form.receiver_phone}}" data-k="receiver_phone" onInput="onInput"/>
     </view>
-    <view class="field">
+    <!-- 省市区默认走选择器；码表拉不到时（pcaFallback）退回手输，保证断网也能填 -->
+    <view class="field" a:if="{{!pcaFallback}}" onTap="onPickRegion">
       <text class="label">省市区</text>
-      <input class="input" placeholder="如：海南省 海口市 龙华区" placeholder-class="ph"
+      <view class="picker {{form._pca ? '' : 'ph'}}">{{form._pca || '请选择所在地区'}}</view>
+      <text class="arrow">›</text>
+    </view>
+    <view class="field" a:else>
+      <text class="label">省市区</text>
+      <input class="input" placeholder="如：海南省 海口市 龙华区（无区县可只填两段）" placeholder-class="ph"
              value="{{form._pca}}" data-k="_pca" onInput="onInputPca" onBlur="onBlurPca"/>
     </view>
     <view class="field">

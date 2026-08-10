@@ -831,7 +831,9 @@ def create_order():
         "address_snapshot": {
             "receiver_name": addr["receiver_name"],
             "receiver_phone": addr["receiver_phone"],
-            "full": f"{addr['province']} {addr['city']} {addr['district']} {addr['detail']}",
+            # district 可能为空（省直管县级市），用 join 过滤掉空段免得多出空格
+            "full": " ".join(x for x in (addr.get("province"), addr.get("city"),
+                                         addr.get("district"), addr.get("detail")) if x),
         },
         "lock_until": None,
         "certify_id": None,
