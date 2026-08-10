@@ -42,7 +42,7 @@ export const api = {
   // 仪表盘
   stats:    () => http.get('/stats'),
 
-  // 统计中心（仅 admin）
+  // 统计中心
   statsCenter: () => http.get('/stats/center'),
 
   // 通用 CRUD
@@ -86,8 +86,12 @@ export const api = {
   uiConfig: () => http.get('/ui-config'),
   // 重试支付宝商家订单同步（alipay.merchant.order.sync）
   resyncOrder: (oid) => http.post(`/orders/${oid}/sync`),
-  // 重试「综合授权成功后自动收租金」：收上来即 audit → send。幂等，可反复点
-  retryRentCapture: (oid) => http.post(`/orders/${oid}/rent/retry`),
+  // 客服联系客户并确认后，人工重试首期租金；成功即 audit → send
+  retryRentCapture: (oid) => http.post(`/orders/${oid}/rent/retry`, {
+    customer_contact_confirmed: true,
+  }),
+  // 押金已解冻后只重试租金退款，不会重复解冻
+  retryCancelRefund: (oid) => http.post(`/orders/${oid}/cancel-refund/retry`),
   // 用户取消申请审核（pending_cancel 状态专用）
   approveOrderCancel: (oid) => http.post(`/orders/${oid}/cancel-approve`),
   rejectOrderCancel:  (oid, reason = '') => http.post(`/orders/${oid}/cancel-reject`, { reason }),

@@ -85,9 +85,9 @@
   border: 4rpx solid currentColor;
   border-radius: 8rpx;
 }
-.o-ico.pay { color: #2b7cff; }
-.o-ico.pay::after {
-  content:'¥'; position: absolute; left: 0; right: 0; top: 6rpx;
+.o-ico.audit { color: #2b7cff; }
+.o-ico.audit::after {
+  content:'免'; position: absolute; left: 0; right: 0; top: 6rpx;
   text-align: center; font-size: 26rpx; color: #2b7cff; font-weight: 800;
 }
 .o-ico.send { color: #5aa9ff; }

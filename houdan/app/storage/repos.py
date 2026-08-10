@@ -194,8 +194,9 @@ order_repo = SqliteRepository(
         # SKU 快照：历史订单与无 SKU 的极端情况恒为 0 / ""，各端据此决定是否显示 SKU 行
         "sku_id": 0, "sku_name": "",
         "price_per_day": 0.0, "days": 0,
-        # amount = 实付总租金（已扣优惠）；original_amount = 未扣前的总租金
-        "amount": 0.0, "original_amount": 0.0,
+        # amount 会随续租累加；initial_rent_amount 是首期真实收款快照，
+        # 取消时只能拿它去退固定的 {oid}R 首期交易。None = 老数据，读时反推。
+        "amount": 0.0, "initial_rent_amount": None, "original_amount": 0.0,
         # 优惠券核销快照：未用券时全部为空/0
         "coupon_id": 0, "user_coupon_id": 0,
         "coupon_name": "", "coupon_threshold": 0.0,
@@ -221,18 +222,29 @@ order_repo = SqliteRepository(
         # 下单后写一次就不动；后台改 setting 不影响历史订单
         "freeze_amount":        0.0,
         "freeze_includes_rent": True,
-        # 首期租金普通交易（新订单 pay → audit）
+        # 综合授权后的首期租金转支付交易
         "rent_out_trade_no": "", "rent_trade_no": "", "rent_trade_status": "",
         "rent_paid_at": 0, "rent_payment_error": "", "rent_payment_raw": {},
         "rent_refund_request_no": "", "rent_refunded_at": 0, "rent_refunded_amount": 0.0,
         "rent_refund_error": "", "rent_refund_raw": {},
+        "rent_refund_attempts": 0, "rent_refund_last_at": 0,
         "rent_capture_attempts": 0,
-        # 综合授权后自动收租金的留痕：last_at 供定时重试算退避，
+        "rent_manual_retry_count": 0, "rent_manual_retry_confirmed_at": 0,
+        "rent_manual_retry_staff_id": 0, "rent_manual_retry_staff_name": "",
+        # 综合授权后收租金的留痕：last_at 记录最近一次首次/人工尝试，
         # last_error 是 auth_trade_pay 抛出的支付宝原文（含 sub_code/sub_msg）
         "rent_capture_last_at": 0, "rent_capture_last_error": "",
         "status": "audit",
         "address_id": 0, "address_snapshot": {},
         "lock_until": None, "certify_id": None,
+        # 取消申请必须保留来源和资金处理口径：用户在待发货阶段，或 audit
+        # 阶段已冻结押金后申请取消时，后台审批才允许解冻押金并退首期租金。
+        # None 用于兼容尚未写入该标记的老订单。
+        "cancel_requested_by": "", "cancel_source_status": "",
+        "cancel_refund_rent": None,
+        # 解冻同步 SUCCESS / 异步成功通知到达时落库。该字段一旦存在，
+        # pending_cancel 后续只能重试租金退款，不得重复下发押金解冻。
+        "unfreeze_completed_at": 0,
         # send_at = audit→send（芝麻免押成功）落地的 unix 秒，前端 48h 发货倒计时基准
         "send_at": None,
         # 物流：发货时由 admin 写入；shipped_at 为发货 unix 秒
@@ -257,9 +269,17 @@ order_repo = SqliteRepository(
         # sync_ok     = 最近一次同步是否成功；用于前端展示 + 失败重试入口
         # sync_at     = 最近一次同步时间（unix 秒）
         # sync_err    = 最近一次同步失败原因（成功后清空）
+        # sync_warn   = 同步成功但支付宝带回的提示（如订单消息未配置/用户未授权，
+        #               不影响订单中心状态，不算失败）
         "sync_status": "", "sync_ok": False, "sync_at": None, "sync_err": "",
-        # alipay 资金授权号（freeze notify 写入，trade.pay 时复用）
+        "sync_warn": "",
+        # alipay 资金授权号（freeze notify 写入，trade.pay 时复用）。
+        # 三个号都只表示"支付宝有这笔授权单/操作"，与冻结成败无关（INIT 也有号）。
         "alipay_auth_no": "", "alipay_out_request_no": "", "alipay_operation_id": "",
+        # 押金确实冻结成功的时间（unix 秒）。判断"能不能发货 / 押金授权倒计时"
+        # 的唯一依据，只在 is_frozen 为真或 freeze 通知 SUCCESS 时写入。
+        # 见 app/routes/alipay.py 的 freeze_confirmed / mark_freeze_success。
+        "freeze_succeeded_at": None,
         # 预授权重试支持：同一订单可能多次发起 freeze（免押取消→回退押金）。
         # 支付宝授权订单按 out_order_no 唯一，复用同一号会被拒"订单已存在"，
         # 故每次冻结生成带递增后缀的 out_order_no（首次裸号，之后 _A2/_A3…）。

@@ -2,7 +2,7 @@ const { get, post } = require('../../utils/request.js');
 const pricing = require('../../utils/pricing.js');
 
 const STATUS_TEXT = {
-  pay: '待支付', audit: '待免押',
+  audit: '待免押',
   send: '待发货', pending_cancel: '取消审核中',
   recv: '待收货', using: '租赁中',
   return: '待归还', overdue: '已逾期',
@@ -40,9 +40,9 @@ const COURIER_NAMES = {
 
 // 顶部进度条的五个阶段。10 种订单状态收敛到这 5 段展示，
 // 用户不需要理解 return_inspecting 和 overdue 的区别，只需要知道走到哪一步了。
-const STEPS = ['付租金/免押', '商家发货', '签收使用', '归还/续租', '订单完成'];
+const STEPS = ['免押授权', '商家发货', '签收使用', '归还/续租', '订单完成'];
 const STATUS_STEP = {
-  audit: 0, pay: 0,
+  audit: 0,
   send: 1, pending_cancel: 1,
   recv: 2, using: 2,
   return: 3, overdue: 3, return_inspecting: 3,
@@ -50,10 +50,9 @@ const STATUS_STEP = {
 };
 // 状态副标题：告诉用户"现在轮到谁做什么"，比只写状态名有用
 const STATUS_SUB = {
-  audit:  '租金已支付，请继续完成押金免押',
-  pay:    '订单待支付租金，支付后再进行押金免押',
+  audit:  '请完成免押/押金授权，授权成功后系统自动结算租金',
   send:   '商家正在备货，承诺 48 小时内发货',
-  pending_cancel: '取消申请审核中，商家同意后将自动解冻',
+  pending_cancel: '取消申请审核中，商家同意后将解冻押金并退还已付首期租金',
   recv:   '商家已发货，请注意查收',
   using:  '设备使用中，到期前可归还或续租',
   return: '租期即将到期，请及时安排归还',
@@ -121,7 +120,7 @@ function daysDiff(d1, d2) {
 
 Page({
   data: {
-    o: {}, payingRent: false, freezing: false, charges: [], chargeTotalText: '',
+    o: {}, freezing: false, charges: [], chargeTotalText: '',
     renewal: {
       show: false, selected: 3, custom: false, customDate: '', minDate: '', maxDate: '',
       quote: null, quoting: false, paying: false, maxExtendDays: 60, unavailableMsg: '',
@@ -148,8 +147,7 @@ Page({
     if (!id) return;
     this._orderId = id;
     this.loadOrder(id).then(() => {
-      if (q && q.rent === '1' && this.data.o.status === 'pay') this.onRentPay(true);
-      else if (q && q.credit === '1' && this.data.o.status === 'audit') this.onCreditFreeze();
+      if (q && q.credit === '1' && this.data.o.status === 'audit') this.onCreditFreeze();
     });
     this.loadCouriers();
   },
@@ -206,8 +204,12 @@ Page({
       o._stepIndex = STATUS_STEP[o.status];
       if (o._stepIndex === undefined) o._stepIndex = -1;   // cancelled：不画进度条
       o._statusSub = STATUS_SUB[o.status] || '';
-      if (o.status === 'audit' && o.alipay_auth_no && !o.rent_paid_at) {
-        o._statusSub = '综合授权已成功，正在自动结算租金，结算前不会发货';
+      // 只有后端确认押金真冻住了（freeze_confirmed）才敢对用户说"授权已成功"。
+      // 早先这里判的是 o.alipay_auth_no，而授权号在用户没完成授权时就已经有了。
+      if (o.status === 'audit' && o.freeze_confirmed && !o.rent_paid_at) {
+        o._statusSub = (o.rent_capture_last_error || o.rent_payment_error)
+          ? '押金授权已成功，但首期租金结算未完成；系统不会重复扣款，请等待客服联系处理'
+          : '押金授权已成功，正在进行首次租金结算，结算前不会发货';
       }
       o._cancelled = o.status === 'cancelled';
       // 租期时间轴：与下单时同一套算法（utils/pricing），四个日期口径一致
@@ -228,8 +230,8 @@ Page({
       this.loadLogistics();
       this._prepareRenewalCard(o);
       // 待免押且发起过冻结的订单：进页面主动向支付宝对账一次。
-      // 用户付完款没等到结果就退出/异步通知丢失时，凭这次 query 就能把订单
-      // 推进到待发货，而不是一直停在"待免押"。只对账一次，避免 loadOrder 循环。
+      // 首次授权通知丢失时可补做首次结算；若首期收租已经失败，本次只查状态，
+      // 不会因为用户刷新页面再次扣款。
       if (o.status === 'audit' && Number(o.alipay_freeze_attempts || 0) > 0
           && !this._auditReconciled) {
         this._auditReconciled = true;
@@ -238,14 +240,6 @@ Page({
           // await 刷新完再返回：onLoad 的 credit=1 自动拉起支付读取的是刷新后的
           // 状态，已付款的订单不会再被拉起一次多余的收银台
           if (q && q.is_frozen) await this.loadOrder(o.id);
-        } catch (err) {}
-      }
-      // 付款后关闭小程序或异步回调丢失时，进页主动对账一次。
-      if (o.status === 'pay' && o.rent_out_trade_no && !this._rentReconciled) {
-        this._rentReconciled = true;
-        try {
-          const q = await post(`/api/orders/${o.id}/rent/query`, {});
-          if (q && q.is_paid) await this.loadOrder(o.id);
         } catch (err) {}
       }
     } catch (e) {}
@@ -646,47 +640,6 @@ Page({
     });
   },
 
-  // -------------------- 首期租金（pay 状态触发） --------------------
-  async onRentPay(continueToCredit = false) {
-    const o = this.data.o;
-    if (!o || !o.id || o.status !== 'pay' || this.data.payingRent) return;
-    if (!my.tradePay) {
-      my.alert({ content: '租金支付仅支持支付宝真机；IDE 模拟器不支持' });
-      return;
-    }
-    this.setData({ payingRent: true });
-    try {
-      my.showLoading({ content: '创建租金支付', mask: true });
-      const r = await post(`/api/orders/${o.id}/rent/pay`, {});
-      my.hideLoading();
-      if (r.already_paid) {
-        await this.loadOrder(o.id);
-        if (this.data.o.status === 'audit') this.onCreditFreeze();
-        return;
-      }
-      const returned = await this._tradePay(r.trade_no);
-      if (!returned) {
-        my.showToast({ content: '已取消租金支付，可稍后继续', type: 'none' });
-        return;
-      }
-      my.showLoading({ content: '确认租金支付结果', mask: true });
-      const q = await post(`/api/orders/${o.id}/rent/query`, {});
-      my.hideLoading();
-      if (!q || !q.is_paid) {
-        my.alert({ title: '支付结果确认中', content: '如已付款，请稍后下拉刷新，系统不会重复收款。' });
-        return;
-      }
-      await this.loadOrder(o.id);
-      my.showToast({ content: '租金支付成功', type: 'success' });
-      // 从确认页进来时连续完成两阶段；用户中途退出后也可在详情页单独继续。
-      if (continueToCredit === true && this.data.o.status === 'audit') this.onCreditFreeze();
-    } catch (e) {
-      my.hideLoading();
-    } finally {
-      this.setData({ payingRent: false });
-    }
-  },
-
   // -------------------- 预授权（audit 状态触发） --------------------
   // 单次不指定渠道：分流全部交给支付宝。后端已注入 serviceId + category，
   // 够格用户在原生页看到「芝麻信用免押」授权（不冻资金），不够格则同页自动切
@@ -702,8 +655,8 @@ Page({
     this.setData({ freezing: true });
 
     try {
-      // 已发起过授权的订单先对账。授权已成功但租金转支付暂时失败时，
-      // 只重试后端结算，绝不再给用户创建第二笔押金授权。
+      // 已发起过授权的订单先对账。授权已成功但租金转支付失败时只查询状态，
+      // 不会再次扣租金，也绝不再给用户创建第二笔押金授权。
       if (Number(o.alipay_freeze_attempts || 0) > 0) {
         my.showLoading({ content: '核对授权与租金', mask: true });
         const existing = await post('/api/alipay/credit/query', { out_order_no: o.id });
@@ -712,7 +665,10 @@ Page({
           if (existing.rent_captured) {
             my.alert({ title: '下单成功', content: '租金已支付，押金授权已生效，订单已进入待发货' });
           } else {
-            my.alert({ title: '授权已成功', content: '租金仍在自动结算中，系统不会重复授权，结算前不会发货。' });
+            my.alert({
+              title: '租金结算未完成',
+              content: '押金授权已成功，但首期租金尚未结清。系统不会自动重复扣款，请等待客服联系处理。',
+            });
           }
           await this.loadOrder(o.id);
           return;
@@ -754,8 +710,8 @@ Page({
         });
       } else if (q && q.is_frozen) {
         my.alert({
-          title: '授权已成功',
-          content: '租金正在从授权额度中结算，暂不会发货。系统将自动对账，请稍后刷新。',
+          title: '租金结算未完成',
+          content: '押金授权已成功，但首期租金未确认到账，暂不会发货。系统不会自动重复扣款，请等待客服联系处理。',
         });
       } else {
         my.alert({

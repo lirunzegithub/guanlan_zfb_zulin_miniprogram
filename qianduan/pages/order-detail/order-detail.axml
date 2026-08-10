@@ -480,7 +480,7 @@
   </view>
 
   <!-- 给底部固定 Bar 留位 -->
-  <view style="height: {{(o.status === 'send' || o.status === 'audit' || o.status === 'pay') ? 200 : 40}}rpx;"></view>
+  <view style="height: {{(o.status === 'send' || o.status === 'audit') ? 200 : 40}}rpx;"></view>
 
   <!-- 底部固定 Bar：次要动作用描边胶囊，主动作用实心蓝，与全站按钮语言一致 -->
   <view a:if="{{o.status === 'send'}}" class="bottom-bar safe-bottom">
@@ -493,14 +493,6 @@
     <view class="bb-ghost" onTap="onCancel">取消订单</view>
     <view class="bb-primary {{freezing ? 'disabled' : ''}}" onTap="onCreditFreeze">
       {{freezing ? '拉起支付…' : '去免押'}}
-    </view>
-  </view>
-  <view a:if="{{o.status === 'pay'}}" class="bottom-bar safe-bottom">
-    <view class="bb-ghost" onTap="onCallService">联系客服</view>
-    <view class="bb-ghost" onTap="onCancel">取消订单</view>
-    <view class="bb-primary {{payingRent ? 'disabled' : ''}}" onTap="onRentPay">
-      <block a:if="{{payingRent}}">拉起支付…</block>
-      <block a:else>支付租金 ¥{{o._amountText}}</block>
     </view>
   </view>
 </view>

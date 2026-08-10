@@ -28,9 +28,11 @@ from app.storage.repos import (
     ensure_default_sku,
 )
 from app.storage.order_ops import update_order
-# 「押金已冻结但租金未结清」的判据与定时任务共用一份，避免后台显示和自动重试口径不一致。
+# 「押金已冻结但租金未结清」与取消退款资格使用统一判据。
 # scheduler 模块级只依赖标准库（对 routes 的 import 全是函数内延迟导入），不构成循环依赖。
-from app.scheduler import rent_capture_pending
+from app.scheduler import (
+    rent_capture_pending, cancel_refund_pending, cancel_requires_rent_refund,
+)
 from app.notify_log import list_recent as list_notify_logs, clear as clear_notify_logs
 from app import auth_token
 from app import logistics
@@ -167,7 +169,7 @@ def stats():
 
     in_progress = sum(
         order_status_count.get(s, 0)
-        for s in ("pay", "audit", "send", "recv", "using", "return", "overdue")
+        for s in ("audit", "send", "recv", "using", "return", "overdue")
     )
 
     return ok({
@@ -857,14 +859,13 @@ def coupons_grants(cid):
 # 订单状态机（与小程序端 ORDER_STATUS_TABS 保持一致）：
 #   audit → send → recv → using → return → done
 #                                      ↘ overdue ↗
-#   audit / send / recv → cancelled（取消并退押）
+#   audit → cancelled（仅走专用取消接口；已付押金后的取消必须由用户申请、后台审批）
 # 注：芝麻免押本身已含活体校验，二次人脸冗余，原 awaiting_face 环节已废弃。
 _ADMIN_ORDER_TRANSITIONS: dict[str, set[str]] = {
-    "pay":               {"cancelled"},                          # 未付租金可直接取消
-    "audit":             {"cancelled"},                          # 取消未付押的订单
-    "send":              {"recv", "pending_cancel", "cancelled"},# 发货 / 用户申请取消 / 强制取消
-    "pending_cancel":    {"send", "cancelled"},                  # 商家驳回回 send / 同意取消
-    "recv":              {"using", "cancelled"},                 # 标记用户已签收 / 退货
+    "audit":             set(),                                  # 取消走资金安全专用接口
+    "send":              {"recv"},                                # 用户取消申请只由 C 端接口创建
+    "pending_cancel":    set(),                                  # 只能走同意/驳回专用接口
+    "recv":              {"using"},                              # 标记用户已签收
     "using":             {"return", "overdue", "return_inspecting", "done"},
     "return":            {"return_inspecting", "done", "overdue"},
     "overdue":           {"return", "return_inspecting", "done"},
@@ -874,7 +875,6 @@ _ADMIN_ORDER_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _ORDER_STATUS_LABEL = {
-    "pay":               "待付租金",
     "audit":             "待免押",
     "send":              "待发货",
     "pending_cancel":    "取消审核中",
@@ -888,19 +888,46 @@ _ORDER_STATUS_LABEL = {
 }
 
 
+def _is_approvable_user_cancel(order: dict) -> bool:
+    """是否为后台可以同意/驳回的用户取消申请（兼容旧 send 申请）。"""
+    cancel_by = order.get("cancel_requested_by") or ""
+    cancel_from = order.get("cancel_source_status") or ""
+    return bool(
+        order.get("status") == "pending_cancel"
+        and order.get("cancel_requested_at")
+        and cancel_by in ("", "user")
+        and cancel_from in ("", "send", "audit_frozen")
+        and order.get("cancelled_by") != "admin_force"
+    )
+
+
 # 芝麻免押授权有效期：360 天后支付宝自动解冻，无法再扣款；剩余 60 天内前端标红提示运营尽快处理
 _FREEZE_VALIDITY_DAYS = 360
 _FREEZE_WARN_DAYS = 60
 # 终态：解冻已完成，无需再追押金倒计时
 _FREEZE_DONE_STATUS = frozenset({"done", "cancelled"})
+# 这些状态下商品已经（或即将）离手，押金必须是冻住的。没冻住 = 零担保在外，
+# 属于必须人工立刻处理的资损敞口，后台要显式报警而不是静静地不显示倒计时。
+_FREEZE_REQUIRED_STATUS = frozenset({
+    "send", "recv", "using", "return", "overdue", "return_inspecting",
+})
 
 
 def _attach_freeze_countdown(out: dict, o: dict) -> None:
     """计算押金授权剩余天数。
-    起点取 send_at（freeze→audit 通过的落地时间）；若缺失但 auth_no 已存在，
+    起点取 send_at（freeze→audit 通过的落地时间）；若缺失但押金确已冻结，
     退回 created_at 作兜底，避免没有起点导致前端一直显示空白。
+
+    前提必须是"押金确实冻住了"（freeze_confirmed），不能只看 alipay_auth_no：
+    授权单 INIT 阶段就有授权号，据此会给一笔根本不存在的授权显示"剩 359 天到期"。
     """
-    if not o.get("alipay_auth_no") or (o.get("status") or "") in _FREEZE_DONE_STATUS:
+    from app.routes.alipay import freeze_confirmed
+    status = o.get("status") or ""
+    confirmed = freeze_confirmed(o)
+    # 已经进入待发货及之后，却查不到任何冻结成功凭证 → 押金很可能压根没冻上。
+    # 这正是 O6E5AB9BC2F15 / O06F77AFBE298 那类单的特征，必须让运营一眼看见。
+    out["freeze_missing"] = (not confirmed) and status in _FREEZE_REQUIRED_STATUS
+    if not confirmed or status in _FREEZE_DONE_STATUS:
         out["freeze_active"] = False
         return
     start = int(o.get("send_at") or 0) or int(o.get("created_at") or 0)
@@ -973,7 +1000,8 @@ def _age_from_id_card(card: str) -> int | None:
 
 def _order_view(o: dict, *, user_map: dict | None = None,
                 product_map: dict | None = None,
-                note_map: dict | None = None) -> dict:
+                note_map: dict | None = None,
+                trade_map: dict | None = None) -> dict:
     """订单列表/详情统一视图：补 user_nickname / product_cover / status_label / 时间字符串。"""
     out = dict(o)
     ts = int(o.get("created_at") or 0)
@@ -987,7 +1015,7 @@ def _order_view(o: dict, *, user_map: dict | None = None,
     out["status_label"] = _ORDER_STATUS_LABEL.get(o.get("status") or "", o.get("status") or "")
     # audit 细分：押金其实已经冻结成功了，只是租金没从授权池里收上来。
     # 一律显示"待免押"会让运营以为用户没付款——实际钱已经冻在支付宝，两回事。
-    # 判据与 scheduler.tick_retry_rent_capture 共用，避免两处口径漂移。
+    # 判据与后台手动重试接口共用，避免两处口径漂移。
     out["rent_capture_pending"] = rent_capture_pending(o)
     out["rent_capture_error"] = (
         o.get("rent_capture_last_error") or o.get("rent_payment_error") or ""
@@ -996,8 +1024,48 @@ def _order_view(o: dict, *, user_map: dict | None = None,
         out["status_label"] = (
             "授权成功·租金结算失败" if out["rent_capture_error"] else "授权成功·租金结算中"
         )
-    # pending_cancel 细分：商家已点同意并下发解冻请求 → "解冻中"，未审核 → 保留 "取消审核中"
-    if o.get("status") == "pending_cancel" and o.get("unfreeze_dispatched_at"):
+    out["cancel_refund_pending"] = cancel_refund_pending(o)
+    out["cancel_refund_error"] = o.get("rent_refund_error") or ""
+    # 取消审批只属于用户发起的申请：通常来自待发货；首期租金结算失败时
+    # 订单仍在 audit，但押金已经冻结，也必须进入同一人工审批。老订单没有来源字段时，
+    # 以 cancel_requested_at 兼容；后台强制取消绝不能伪装成用户申请。
+    out["cancel_approval_allowed"] = _is_approvable_user_cancel(o)
+    out["cancel_refund_rent"] = cancel_requires_rent_refund(o)
+    initial_rent = o.get("initial_rent_amount")
+    if initial_rent is None:
+        # 两种允许审批的来源都尚未履约、不会发生续租，amount 就是首期租金。
+        initial_rent = o.get("amount") or 0
+    try:
+        initial_rent = max(0.0, float(initial_rent or 0))
+    except (TypeError, ValueError):
+        initial_rent = 0.0
+    try:
+        deposit_release = max(
+            0.0, float(o.get("unfreeze_amount") or o.get("deposit_freeze") or 0),
+        )
+    except (TypeError, ValueError):
+        deposit_release = 0.0
+    out["cancel_rent_refund_amount"] = round(
+        initial_rent
+        if out["cancel_refund_rent"] and o.get("rent_paid_at") and not o.get("rent_refunded_at")
+        else 0.0,
+        2,
+    )
+    out["cancel_initial_rent_amount"] = round(initial_rent, 2)
+    out["cancel_rent_was_paid"] = bool(o.get("rent_paid_at"))
+    out["cancel_deposit_release_amount"] = round(deposit_release, 2)
+    # 审批前展示支付宝实际剩余冻结额度：待发货取消通常只剩押金；
+    # 若首期租金扣款失败，冻结池里仍可能是“押金+租金”，不能只提示押金数。
+    out["cancel_freeze_release_amount"] = (
+        _calc_unfreezable_amount(o)
+        if out["cancel_approval_allowed"] and not o.get("unfreeze_dispatched_at")
+        else round(deposit_release, 2)
+    )
+    # 押金已经释放后，不能再显示“解冻中”。退租金失败是独立资金异常，
+    # 后台需要一眼看见并可以只重试退款。
+    if out["cancel_refund_pending"]:
+        out["status_label"] = "押金已解冻·租金退款失败"
+    elif o.get("status") == "pending_cancel" and o.get("unfreeze_dispatched_at"):
         out["status_label"] = "解冻中"
     # return_inspecting 细分：商家已点核验通过并下发解冻请求 → "解冻中"
     if o.get("status") == "return_inspecting" and o.get("unfreeze_dispatched_at"):
@@ -1057,6 +1125,16 @@ def _order_view(o: dict, *, user_map: dict | None = None,
         time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sa)) if sa else ""
     )
 
+    # 押金列展示的是"现在还冻着多少"，不是下单时冻了多少：扣过款的订单
+    # 两者不一样，运营按下单额去判断还能扣多少会超额。
+    #   deposit_pool      冻结池基数（下单时的授权额）
+    #   deposit_consumed  已从冻结池划走的扣款合计
+    #   deposit_remaining 当前仍冻结的余额（没冻上/已解冻都是 0）
+    from app.routes.alipay import freeze_confirmed
+    out["freeze_confirmed"]  = freeze_confirmed(o)
+    out["deposit_pool"]      = round(_freeze_pool_base(o), 2)
+    out["deposit_consumed"]  = _consumed_amount(o, trade_map)
+    out["deposit_remaining"] = _deposit_remaining(o, trade_map)
     # 押金授权 360 天倒计时（剩余 ≤60 天前端标红）
     _attach_freeze_countdown(out, o)
 
@@ -1262,7 +1340,7 @@ def admin_order_logistics(oid):
 def admin_retry_rent_capture(oid):
     """手动重试「综合授权成功后自动收租金」。收上来即 audit → send。
 
-    与定时任务 tick_retry_rent_capture 共用同一入口 transition_freeze_done：
+    仅允许工作人员在联系客户并确认后手动触发；系统不会定时循环扣款。
     out_trade_no 固定为 {oid}R、先 query 后 pay，重复点击不会重复扣款。
     失败也返回 200，原因走 msg（与 admin_resync_order 一致）。
     """
@@ -1271,8 +1349,18 @@ def admin_retry_rent_capture(oid):
         return fail(404, "订单不存在")
     if not rent_capture_pending(o):
         return fail(1, "该订单不处于「已冻结押金但租金未结清」状态，无需重试")
+    body = request.get_json(silent=True) or {}
+    if body.get("customer_contact_confirmed") is not True:
+        return fail(1, "请先联系客户确认，再勾选确认后发起人工扣款")
+    staff = getattr(g, "staff", None) or {}
+    order_repo.update(oid, {
+        "rent_manual_retry_count": int(o.get("rent_manual_retry_count") or 0) + 1,
+        "rent_manual_retry_confirmed_at": int(time.time()),
+        "rent_manual_retry_staff_id": staff.get("id") or 0,
+        "rent_manual_retry_staff_name": staff.get("real_name") or staff.get("username") or "",
+    })
     from app.routes.orders import transition_freeze_done
-    after = transition_freeze_done(oid) or order_repo.get(oid)
+    after = transition_freeze_done(oid, retry_failed_capture=True) or order_repo.get(oid)
     if (after or {}).get("status") == "send":
         return ok(_order_view(after), "租金已结清，订单已进入待发货")
     err = (
@@ -1281,6 +1369,25 @@ def admin_retry_rent_capture(oid):
         or "支付宝未确认到账"
     )
     return ok(_order_view(after), f"仍未结清：{err[:160]}")
+
+
+@bp.post("/orders/<oid>/cancel-refund/retry")
+def admin_retry_cancel_refund(oid):
+    """押金已解冻后，只重试首期租金原路退款。
+
+    不再调用 auth_unfreeze；固定 rent_refund_request_no 保证重复点击不会重复退款。
+    """
+    o = order_repo.get(oid)
+    if not o:
+        return fail(404, "订单不存在")
+    if not cancel_refund_pending(o):
+        return fail(1, "该订单不处于「押金已解冻但租金未退」状态")
+    from app.routes.orders import transition_unfreeze_done
+    after = transition_unfreeze_done(oid) or order_repo.get(oid)
+    if (after or {}).get("status") == "cancelled":
+        return ok(_order_view(after), "租金已原路退回，订单已取消")
+    err = (after or {}).get("rent_refund_error") or "支付宝未确认退款成功"
+    return ok(_order_view(after), f"退款仍未完成：{err[:160]}")
 
 
 @bp.post("/orders/<oid>/sync")
@@ -1360,11 +1467,25 @@ def admin_list_orders():
                 note_map[oid] = n
         note_map = {k: _note_view(v) for k, v in note_map.items()}
 
+    # 扣款流水批量预加载：押金列要显示"剩余冻结 = 冻结额 − 已扣款"，
+    # 逐行 trade_repo.list(order_id=...) 会把列表打成 N 次查询，这里一次归并成
+    # {order_id: 已消耗金额}。与 note_map 同一套写法。
+    trade_map: dict = {}
+    if oids:
+        for t in trade_repo.list():
+            toid = t.get("order_id")
+            if toid not in oids or (t.get("status") or "") not in _CONSUMED_TRADE_STATUS:
+                continue
+            try:
+                trade_map[toid] = trade_map.get(toid, 0.0) + float(t.get("amount") or 0)
+            except (TypeError, ValueError):
+                pass
+
     # 注意：这里不调用光影。列表只出本地数据、秒回；光影的平台/备注由前端渲染后
     # 异步调 POST /inventory/cards 补数，避免光影变慢/挂掉拖慢整个订单列表。
     return ok({
         "list":  [_order_view(o, user_map=user_map, product_map=product_map,
-                              note_map=note_map) for o in page_items],
+                              note_map=note_map, trade_map=trade_map) for o in page_items],
         "total": total,
         "page":  page,
         "size":  size,
@@ -1471,6 +1592,17 @@ def admin_update_order(oid):
             return fail(1, f"非法状态：{new_status}")
         cur = o.get("status") or ""
         if new_status != cur:
+            if cur == "pending_cancel":
+                return fail(1, "取消审核中的订单只能使用「同意取消」或「驳回」按钮处理")
+            if new_status == "pending_cancel":
+                return fail(1, "后台不能代替用户创建取消申请；请让用户在订单页提交")
+            # 取消涉及支付宝押金和首期租金两条资金链，禁止从通用状态编辑器
+            # 直接改终态（force 也不能绕过）。待免押订单走“取消”专用接口；
+            # 已付押金的待发货订单必须先由用户申请，再由工作人员审批。
+            if new_status == "cancelled":
+                if cur == "audit":
+                    return fail(1, "取消订单请使用列表中的「取消」按钮，系统会先核对并释放支付宝资金")
+                return fail(1, "已付押金订单不能由后台直接改为已取消；请让用户先提交取消申请，再由工作人员审批")
             allowed = _ADMIN_ORDER_TRANSITIONS.get(cur, set())
             if new_status not in allowed and not body.get("force"):
                 return fail(
@@ -1479,16 +1611,6 @@ def admin_update_order(oid):
                     f"「{_ORDER_STATUS_LABEL.get(new_status, new_status)}」"
                     f"（如确需强制修改请勾选「强制修改」）",
                 )
-            # 押金仍在冻结且未下发过解冻的订单，禁止在通用流转里直接置为
-            # cancelled——这条路不调支付宝解冻，会把用户押金卡在冻结池直到
-            # 预授权到期。请走 POST /orders/<oid>/admin-cancel（先解冻再取消）。
-            # force 仅用于确认支付宝端已解冻/已过期自动解冻的例外场景。
-            if (new_status == "cancelled" and not body.get("force")
-                    and (o.get("alipay_auth_no") or "").strip()
-                    and not o.get("unfreeze_dispatched_at")):
-                return fail(1, "该订单押金仍在支付宝冻结中，直接改状态不会退押金；"
-                               "请用订单列表的「取消」按钮（会先解冻押金）。"
-                               "若确认支付宝端已解冻，可勾选「强制修改」跳过本保护")
             patch["status"] = new_status
             # 进入 send 后锁库倒计时已无意义，清掉避免列表展示残留
             if new_status in ("send", "recv", "using", "return", "overdue", "done"):
@@ -1544,6 +1666,8 @@ def admin_cancel_approve(oid):
         return fail(404, "订单不存在")
     if o.get("status") != "pending_cancel":
         return fail(1, f"订单当前状态 {o.get('status')}，不能同意取消")
+    if not _is_approvable_user_cancel(o):
+        return fail(1, "该记录不是用户提交的有效取消申请，不能走取消审批")
     if o.get("unfreeze_dispatched_at"):
         return fail(1, "已下发过解冻请求，等待支付宝异步通知")
 
@@ -1557,19 +1681,32 @@ def admin_cancel_approve(oid):
     amount  = _calc_unfreezable_amount(o)
     remark  = "商家同意用户取消申请，解冻剩余冻结额度"
     now = int(time.time())
+    rent_raw = o.get("initial_rent_amount")
+    if rent_raw is None:
+        rent_raw = o.get("amount") or 0
+    try:
+        rent_amount = max(0.0, float(rent_raw or 0)) if o.get("rent_paid_at") else 0.0
+    except (TypeError, ValueError):
+        rent_amount = 0.0
+    rent_done_text = "租金已退" if rent_amount > 0 else "无需退租金"
 
     if not auth_no:
         # 支付宝确认无此冻结（真未付款/历史数据），本地直接关单
         from app.routes.orders import transition_unfreeze_done
         updated = transition_unfreeze_done(oid)
-        return ok(_order_view(updated or o), "支付宝端无冻结记录，已本地直接关单")
+        if (updated or {}).get("status") == "cancelled":
+            return ok(_order_view(updated), f"支付宝端无冻结记录，{rent_done_text}，订单已取消")
+        return ok(_order_view(updated or o),
+                  f"无需解冻押金，但租金退款失败：{((updated or {}).get('rent_refund_error') or '未知错误')[:120]}")
 
     if amount <= 0:
         # 冻结池已经被扣款消耗完（alipay 不接受 0 元解冻），本地直接关单
         from app.routes.orders import transition_unfreeze_done
         updated = transition_unfreeze_done(oid)
+        if (updated or {}).get("status") == "cancelled":
+            return ok(_order_view(updated), f"无可解冻金额，{rent_done_text}，订单已取消")
         return ok(_order_view(updated or o),
-                  "冻结额度已被扣款全部消耗，无可解冻金额，本地直接关单")
+                  f"无需解冻押金，但租金退款失败：{((updated or {}).get('rent_refund_error') or '未知错误')[:120]}")
 
     out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
     try:
@@ -1595,24 +1732,20 @@ def admin_cancel_approve(oid):
     if (uf.get("status") or "").upper() == "SUCCESS":
         from app.routes.orders import transition_unfreeze_done
         updated = transition_unfreeze_done(oid) or updated
-        return ok(_order_view(updated), f"已同意取消，押金 ¥{amount:.2f} 已解冻，订单已取消")
+        if updated.get("status") == "cancelled":
+            return ok(_order_view(updated), f"已同意取消，押金 ¥{amount:.2f} 已解冻，{rent_done_text}")
+        return ok(_order_view(updated),
+                  f"押金 ¥{amount:.2f} 已解冻，但租金退款失败：{(updated.get('rent_refund_error') or '未知错误')[:120]}")
     return ok(_order_view(updated), f"已同意，已下发解冻请求 ¥{amount:.2f}，等待支付宝通知")
 
 
 @bp.post("/orders/<oid>/admin-cancel")
 def admin_force_cancel(oid):
-    """后台主动取消订单（未发货等场景），自动解冻用户押金。
+    """后台主动取消确认未冻结资金的待免押订单。
 
-    与「同意用户取消申请」(admin_cancel_approve) 同一套保守策略：
-      - 押金已冻结（有 auth_no 且剩余可解冻额 > 0）→ 先下发 alipay 解冻请求、
-        把订单置为 pending_cancel 并打 unfreeze_dispatched_at；真正推进到
-        cancelled（+退优惠券）交给异步 notify 的 transition_unfreeze_done，
-        避免"本地已取消但支付宝解冻失败"的状态错位。
-      - 未冻结押金（audit）/ 无可解冻额（冻结池已被扣款耗尽）→ 本地直接关单并退券。
-
-    区别于通用 PUT /orders/<id> 状态流转（那条不解冻，会把押金卡死到预授权到期）。
+    一旦支付宝已经冻结押金，后台就不能绕过用户申请直接取消；必须由用户
+    在订单页提交申请，再通过 cancel-approve 审批并展示完整资金影响。
     """
-    from app.alipay_client import get_client
     from app.routes.orders import _refund_coupon_if_any
     o = order_repo.get(oid)
     if not o:
@@ -1621,29 +1754,14 @@ def admin_force_cancel(oid):
     status = o.get("status") or ""
     if status in ("cancelled", "done"):
         return fail(1, f"订单已是终态「{_ORDER_STATUS_LABEL.get(status, status)}」，无需取消")
-    if status == "pending_cancel" or o.get("unfreeze_dispatched_at"):
+    if status != "audit":
+        if status == "send":
+            return fail(1, "该订单已付押金，请让用户先提交取消申请，再由工作人员在取消审核中处理")
+        return fail(1, "订单已进入履约阶段，不能按未履约订单直接取消；请走归还、核验和结算流程")
+    if o.get("unfreeze_dispatched_at"):
         return fail(1, "订单已在取消/解冻处理中，等待支付宝异步通知")
 
     now = int(time.time())
-    # 待付租金订单还没进入押金授权，不能走 auth_no 查询；
-    # 但如果拉起过收银台，必须先对账防止误关已付款订单。
-    if status == "pay":
-        rent_otn = (o.get("rent_out_trade_no") or "").strip()
-        if rent_otn:
-            try:
-                q = get_client().trade_query(out_trade_no=rent_otn)
-                if (q.get("trade_status") or "").upper() in ("TRADE_SUCCESS", "TRADE_FINISHED"):
-                    from app.routes.orders import complete_initial_rent
-                    complete_initial_rent(rent_otn, trade_no=q.get("trade_no") or "", raw=q)
-                    return fail(1, "租金已支付，已自动推进为待免押；不能按未付款订单取消")
-            except Exception as e:
-                return fail(1, f"向支付宝核对租金失败，已中止取消：{e}")
-        updated = update_order(oid, {
-            "status": "cancelled", "cancelled_at": now, "cancelled_by": "admin_force",
-        }, sync_reason="admin_cancel_before_rent_paid")
-        _refund_coupon_if_any(o)
-        return ok(_order_view(updated), "未支付租金，订单已取消")
-
     # 本地没有授权号时先向支付宝核实（通知不可达/丢失的单，空 ≠ 未冻结；
     # 直接按"未冻结"关单会把押金留在支付宝冻结池直到预授权到期）
     try:
@@ -1651,50 +1769,23 @@ def admin_force_cancel(oid):
     except Exception as e:
         return fail(1, f"向支付宝核实押金冻结状态失败：{e}"
                        f"（已中止取消，避免漏解冻押金），请稍后重试")
-    amount = _calc_unfreezable_amount(o)
+    if auth_no:
+        return fail(1, "支付宝押金已经冻结，后台不能直接取消；请让用户先提交取消申请，再由工作人员审批")
 
-    # 支付宝端确认未冻结、或无可解冻额：本地直接关单（alipay 不接受 0 元解冻）
-    if not auth_no or amount <= 0:
-        from app.routes.orders import refund_initial_rent
-        refunded, refund_err = refund_initial_rent(o, reason="商家取消租赁订单")
-        if not refunded:
-            return fail(1, f"租金原路退款失败，已中止取消：{refund_err}")
-        updated = update_order(oid, {
-            "status": "cancelled",
-            "cancelled_at": now,
-            "cancelled_by": "admin_force",
-        }, sync_reason="admin_force_cancel")
-        _refund_coupon_if_any(o)
-        why = "支付宝端无冻结记录" if not auth_no else "无可解冻金额（冻结额已被扣款耗尽）"
-        return ok(_order_view(updated), f"（{why}）已直接取消")
-
-    # 有冻结额：下发解冻，转 pending_cancel
-    out_request_no = "UF" + uuid.uuid4().hex[:18].upper()
-    try:
-        uf = get_client().auth_unfreeze(
-            auth_no=auth_no,
-            out_request_no=out_request_no,
-            amount=amount,
-            remark="商家主动取消订单，解冻用户押金",
-        )
-    except Exception as e:
-        return fail(1, f"调用 alipay 解冻失败：{e}")
-
+    from app.routes.orders import refund_initial_rent
+    refunded, refund_err = refund_initial_rent(o, reason="商家取消未冻结租赁订单")
+    if not refunded:
+        return fail(1, f"租金原路退款失败，已中止取消：{refund_err}")
     updated = update_order(oid, {
-        "status": "pending_cancel",
-        "cancel_approved_at": now,
-        "unfreeze_dispatched_at": now,
-        "unfreeze_out_request_no": out_request_no,
-        "unfreeze_amount": amount,
+        "status": "cancelled",
+        "cancelled_at": now,
         "cancelled_by": "admin_force",
+        "cancel_requested_by": "admin",
+        "cancel_source_status": "audit",
+        "cancel_refund_rent": True,
     }, sync_reason="admin_force_cancel")
-    # unfreeze 同步返回 SUCCESS 即解冻完成，直接推终态；notify 作冗余确认（幂等）
-    if (uf.get("status") or "").upper() == "SUCCESS":
-        from app.routes.orders import transition_unfreeze_done
-        updated = transition_unfreeze_done(oid) or updated
-        return ok(_order_view(updated), f"押金 ¥{amount:.2f} 已解冻，订单已取消")
-    return ok(_order_view(updated),
-              f"已下发解冻请求 ¥{amount:.2f}，支付宝确认后订单将自动置为已取消")
+    _refund_coupon_if_any(o)
+    return ok(_order_view(updated), "支付宝端确认无冻结记录，订单已直接取消")
 
 
 @bp.post("/orders/<oid>/cancel-reject")
@@ -1705,15 +1796,28 @@ def admin_cancel_reject(oid):
         return fail(404, "订单不存在")
     if o.get("status") != "pending_cancel":
         return fail(1, f"订单当前状态 {o.get('status')}，无取消申请可驳回")
+    cancel_from = o.get("cancel_source_status") or ""
+    if not _is_approvable_user_cancel(o):
+        return fail(1, "该记录不是用户提交的取消申请，不能驳回")
+    if o.get("unfreeze_dispatched_at") or o.get("unfreeze_completed_at"):
+        return fail(1, "押金解冻已经开始，不能再驳回取消申请")
     body = request.get_json(silent=True) or {}
     reject_reason = (body.get("reason") or "").strip()
-    # status: pending_cancel→send，拦截器自动 sync 到支付宝订单中心（→ TO_SEND_GOODS）
+    reject_to = "audit" if cancel_from == "audit_frozen" else "send"
+    # 待发货申请驳回后回 send；押金已冻结但租金异常的申请驳回后回 audit，
+    # 继续保留“等待客服沟通、人工重试租金”的异常处理状态。
     updated = update_order(oid, {
-        "status": "send",
+        "status": reject_to,
         "cancel_reject_reason": reject_reason,
         "cancel_rejected_at": int(time.time()),
+        "cancel_requested_by": "",
+        "cancel_source_status": "",
+        "cancel_refund_rent": None,
     }, sync_reason="admin_cancel_reject")
-    return ok(_order_view(updated), "已驳回，订单回到待发货")
+    return ok(
+        _order_view(updated),
+        "已驳回，订单回到租金异常待处理" if reject_to == "audit" else "已驳回，订单回到待发货",
+    )
 
 
 # ---------- 商家代用户填写寄回快递信息（using/return/overdue → return_inspecting） ----------
@@ -1878,7 +1982,7 @@ def admin_delete_order(oid):
 
 # ---------- 用户 ----------
 # 进行中订单状态：与 stats 接口口径一致（done / cancelled 为终态）
-_ORDER_IN_PROGRESS = frozenset({"pay", "audit", "send", "recv", "using", "return", "overdue"})
+_ORDER_IN_PROGRESS = frozenset({"audit", "send", "recv", "using", "return", "overdue"})
 
 
 @bp.get("/users")
@@ -1919,7 +2023,7 @@ def list_users():
     return ok({"list": enriched, "total": len(enriched)})
 
 
-# ============ 统计中心（仅 admin） ============
+# ============ 统计中心 ============
 
 # 「在租」口径：设备已签收、尚未寄回 —— 租赁中 / 待归还 / 已逾期
 _ORDER_IN_RENT = frozenset({"using", "return", "overdue"})
@@ -1979,13 +2083,10 @@ def _avg1(nums) -> float:
 
 @bp.get("/stats/center")
 def stats_center():
-    """统计中心：在租人群画像 + 租期时长。仅 admin 可访问。
+    """统计中心：在租人群画像 + 租期时长。所有已登录工作人员均可访问。
 
     年龄与性别均由身份证号推算，接口只回聚合数字，不下发任何证件号明文。
     """
-    if g.staff.get("role") != "admin":
-        return fail(403, "仅 admin 可查看统计中心")
-
     orders = order_repo.list()
     users = {u.get("id"): u for u in user_repo.list()}
 
@@ -2691,10 +2792,15 @@ def _resolve_auth_no(order: dict) -> str:
     本地为空 ≠ 未冻结，直接按"未冻结"关单会把押金留在支付宝冻结池。
 
     返回：
-      - 非空 auth_no  → 押金确实冻着（顺手补落库），照常走解冻
-      - ""            → 支付宝明确答复无此冻结（真未付款/历史数据），可安全本地关单
+      - 非空 auth_no  → 支付宝有这笔授权单（顺手补落库），照常走解冻
+      - ""            → 支付宝明确答复无此授权单（真未付款/历史数据），可安全本地关单
     抛异常 → 查询本身失败（网络/配置），调用方应中止操作让管理员重试，
              而不是静默关单。
+
+    注意语义边界：非空只说明"有这笔授权单"，**不等于钱冻着**——INIT（用户没完成
+    授权）和 CLOSED（已解冻）的授权单同样返回授权号。这里刻意保持宽松：宁可对没冻
+    住的授权多发一次解冻（支付宝会直接拒绝，不会多退钱），也不能漏解冻真押着的钱。
+    要判断"押金是否冻着"（发货、倒计时等），一律用 alipay.freeze_confirmed。
     """
     auth_no = (order.get("alipay_auth_no") or "").strip()
     if auth_no:
@@ -2712,21 +2818,26 @@ def _resolve_auth_no(order: dict) -> str:
     return auth_no
 
 
-def _calc_unfreezable_amount(order: dict) -> float:
-    """计算订单在 alipay 端的剩余可解冻金额。
-
-    冻结池 = freeze_amount（下单时落库的快照；老数据回落 deposit_freeze）
-    剩余可解冻 = 冻结池 - 已消耗（所有 TRADE_SUCCESS/FINISHED 扣款的 amount）
-
-    注意：refund 不进入计算——它是商家→买家的钱流，不补回 alipay 冻结池。
-    """
+def _freeze_pool_base(order: dict) -> float:
+    """冻结池基数 = 下单时落库的 freeze_amount；老数据回落 deposit_freeze。"""
     base = float(order.get("freeze_amount") or 0)
     if base <= 0:
-        # 历史订单可能没 freeze_amount，回落用 deposit_freeze
         base = float(order.get("deposit_freeze") or 0)
+    return base
+
+
+def _consumed_amount(order: dict, trade_map: dict | None = None) -> float:
+    """这单已经从冻结池里真正划走的金额（TRADE_SUCCESS/FINISHED 的扣款之和）。
+
+    trade_map 传入时走预加载（列表批量场景，避免逐行查 trade 表）；否则现查。
+    注意：refund 不进入计算——它是商家→买家的钱流，不补回 alipay 冻结池。
+    """
+    oid = order.get("id") or ""
+    if trade_map is not None:
+        return round(float(trade_map.get(oid) or 0), 2)
     consumed = 0.0
     try:
-        for t in trade_repo.list(order_id=order.get("id")):
+        for t in trade_repo.list(order_id=oid):
             if (t.get("status") or "") in _CONSUMED_TRADE_STATUS:
                 try:
                     consumed += float(t.get("amount") or 0)
@@ -2735,7 +2846,32 @@ def _calc_unfreezable_amount(order: dict) -> float:
     except Exception:
         # trade 表查询出错时按"无消耗"处理，避免完全卡死解冻流程
         pass
-    return round(max(0.0, base - consumed), 2)
+    return round(consumed, 2)
+
+
+def _calc_unfreezable_amount(order: dict, trade_map: dict | None = None) -> float:
+    """计算订单在 alipay 端的剩余可解冻金额。
+
+    冻结池 = freeze_amount（下单时落库的快照；老数据回落 deposit_freeze）
+    剩余可解冻 = 冻结池 - 已消耗（所有 TRADE_SUCCESS/FINISHED 扣款的 amount）
+    """
+    return round(max(0.0, _freeze_pool_base(order) - _consumed_amount(order, trade_map)), 2)
+
+
+def _deposit_remaining(order: dict, trade_map: dict | None = None) -> float:
+    """当前**仍冻在支付宝**的押金额——列表/详情的「押金」列显示这个数。
+
+    与 _calc_unfreezable_amount 的差别：这里还要考虑"押金压根没冻上"和
+    "已经解冻完毕"两种情况，它们的剩余都是 0，不能再显示一个冻结池快照。
+    纯本地计算（冻结额 − 已扣款），不调支付宝——列表几十行不能每行一次远程查询；
+    要拿支付宝的真实 rest_amount，用详情页的「支付宝预授权明细 · 刷新」。
+    """
+    from app.routes.alipay import freeze_confirmed
+    if not freeze_confirmed(order):
+        return 0.0
+    if order.get("unfreeze_completed_at") or (order.get("status") or "") in _FREEZE_DONE_STATUS:
+        return 0.0
+    return _calc_unfreezable_amount(order, trade_map)
 
 
 @bp.get("/charges/reason-types")

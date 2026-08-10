@@ -33,7 +33,6 @@ MIN_RENT_DAYS = 3
 # 二次人脸冗余且拉低转化，故 awaiting_face 已废弃，免押成功直接进 send。
 # return_inspecting = 用户已寄回、商家核验中（核验通过 → unfreeze → done）
 ORDER_STATUS_TABS = [
-    {"key": "pay",               "name": "待付租金"},
     {"key": "audit",             "name": "待免押"},
     {"key": "send",              "name": "待发货"},
     {"key": "pending_cancel",    "name": "取消审核中"},
@@ -50,6 +49,13 @@ ORDER_STATUS_TABS = [
 _RETURN_SHIP_ALLOWED = frozenset({"using", "return", "overdue"})
 _RENEWAL_ALLOWED = frozenset({"using", "return"})
 _renewal_lock = threading.RLock()
+# gunicorn 生产环境是单进程多线程。freeze notify、前端主动 query 和定时对账
+# 都会进入 transition_freeze_done；这把锁专门保护“扣库存 + 加销量 + audit→send”
+# 这个本地终态区；租金查询/扣款的长网络调用仍在锁外。
+_freeze_transition_lock = threading.RLock()
+# 解冻同步响应和异步 notify 也可能同时到达。退租金虽然有固定请求号
+# 保底幂等，仍需串行本地状态推进，避免重复记录/返回错误终态。
+_unfreeze_transition_lock = threading.RLock()
 
 
 def _parse_date(value: str) -> date | None:
@@ -106,7 +112,6 @@ def _renewal_quote(o: dict, new_end_date: str) -> tuple[dict | None, str]:
 
 
 _USER_STATUS_LABEL = {
-    "pay":               "待付租金",
     "audit":             "待免押",
     "send":              "待发货",
     "pending_cancel":    "取消审核中",
@@ -137,10 +142,24 @@ def _enrich(o: dict) -> dict:
         out["product_cover"] = ""
     status = o.get("status") or ""
     out["status_label"] = _USER_STATUS_LABEL.get(status, status)
-    if status == "audit" and o.get("alipay_auth_no") and not o.get("rent_paid_at"):
-        out["status_label"] = "租金结算中"
-    # pending_cancel 细分：商家已点同意并下发解冻请求 → "解冻中"
-    if status == "pending_cancel" and o.get("unfreeze_dispatched_at"):
+    # 押金到底冻没冻住，只认这个（alipay_auth_no 在用户还没授权时就有了，
+    # 拿它当判据会对着一笔没冻结的订单说"押金授权已成功"）。前端也读这个字段。
+    from app.routes.alipay import freeze_confirmed
+    out["freeze_confirmed"] = freeze_confirmed(o)
+    if status == "audit" and out["freeze_confirmed"] and not o.get("rent_paid_at"):
+        out["status_label"] = (
+            "租金结算异常" if (o.get("rent_capture_last_error") or o.get("rent_payment_error"))
+            else "租金结算中"
+        )
+    # 押金已释放但租金退款失败时，不能继续误导用户为“解冻中”。
+    if (status == "pending_cancel" and o.get("unfreeze_completed_at")
+            and (o.get("cancel_refund_rent") is True or (
+                o.get("cancel_refund_rent") is None and o.get("cancel_requested_at")
+                and o.get("cancelled_by") != "admin_force"
+            ))
+            and o.get("rent_paid_at") and not o.get("rent_refunded_at")):
+        out["status_label"] = "租金退款中"
+    elif status == "pending_cancel" and o.get("unfreeze_dispatched_at"):
         out["status_label"] = "解冻中"
     # return_inspecting 细分：商家已点核验通过并下发解冻请求 → "解冻中"
     if status == "return_inspecting" and o.get("unfreeze_dispatched_at"):
@@ -524,11 +543,41 @@ def _rent_trade_no(order: dict) -> str:
     return (order.get("rent_out_trade_no") or f"{order['id']}R").strip()
 
 
+def _initial_rent_amount(order: dict) -> float:
+    """首期租金的真实收款额。
+
+    新订单直接读 initial_rent_amount 快照；老订单没有该字段时，
+    从已被续租累加过的 order.amount 里扣掉已完成续租金额。
+    不能直接用 order.amount 退首期交易，否则续租后会超额退款。
+    """
+    snap = order.get("initial_rent_amount")
+    if snap is not None:
+        return max(0.0, float(snap or 0))
+    total = float(order.get("amount") or 0)
+    renewed = sum(
+        float(r.get("quoted_amount") or 0)
+        for r in renewal_repo.list(order_id=order.get("id") or "")
+        if r.get("status") == "COMPLETED"
+    )
+    return max(0.0, round_yuan(total - renewed))
+
+
 def refund_initial_rent(order: dict, reason: str = "租赁订单取消") -> tuple[bool, str]:
     """取消已付租金订单时原路全额退租金。固定 out_request_no 保证重试幂等。"""
     if not order.get("rent_paid_at") or order.get("rent_refunded_at"):
         return True, ""
-    amount = float(order.get("amount") or 0)
+    now = int(time.time())
+    fresh = order_repo.get(order["id"]) or order
+    order_repo.update(order["id"], {
+        "rent_refund_attempts": int(fresh.get("rent_refund_attempts") or 0) + 1,
+        "rent_refund_last_at": now,
+    })
+    try:
+        amount = _initial_rent_amount(order)
+    except Exception as e:
+        err = f"计算首期可退租金失败：{e}"
+        order_repo.update(order["id"], {"rent_refund_error": err[:500]})
+        return False, err
     # 0 元租金单（租押分离）的 rent_paid_at 是"无租可收"的标记，背后没有真实交易，
     # 也就没有可退的钱。这里必须放行：判失败会让取消流程（用户取消 / 商家同意取消 /
     # 后台强制取消）全部中止，订单卡在 audit / pending_cancel。
@@ -570,105 +619,6 @@ def refund_initial_rent(order: dict, reason: str = "租赁订单取消") -> tupl
             "rent_refund_request_no": out_request_no, "rent_refund_error": str(e)[:500],
         })
         return False, str(e)
-
-
-def complete_initial_rent(out_trade_no: str, *, trade_no: str = "", raw: dict | None = None) -> dict | None:
-    """首期租金支付成功的唯一业务出口：pay → audit，回调与主动查询共用。"""
-    if not out_trade_no.endswith("R"):
-        return None
-    oid = out_trade_no[:-1]
-    o = order_repo.get(oid)
-    if not o or _rent_trade_no(o) != out_trade_no:
-        return None
-    if o.get("status") == "cancelled":
-        return update_order(oid, {
-            "rent_trade_status": "PAYMENT_EXCEPTION",
-            "rent_payment_error": "订单取消与租金支付同时发生，需原路退款",
-            "rent_trade_no": trade_no,
-            "rent_payment_raw": raw or {},
-        })
-    if o.get("status") != "pay":
-        return o
-
-    raw = raw or {}
-    try:
-        paid_amount = float(raw.get("total_amount") or raw.get("receipt_amount") or o.get("amount") or 0)
-    except (TypeError, ValueError):
-        paid_amount = 0
-    expected = float(o.get("amount") or 0)
-    if abs(paid_amount - expected) > 0.001:
-        return update_order(oid, {
-            "rent_trade_status": "PAYMENT_EXCEPTION",
-            "rent_payment_error": "支付金额与订单租金不一致，需人工核对",
-            "rent_trade_no": trade_no,
-            "rent_payment_raw": raw,
-        })
-
-    now = int(time.time())
-    return update_order(oid, {
-        "status": "audit",
-        "rent_trade_status": "TRADE_SUCCESS",
-        "rent_trade_no": trade_no,
-        "rent_paid_at": now,
-        "rent_payment_error": "",
-        "rent_payment_raw": raw,
-    }, sync_reason="initial_rent_paid")
-
-
-@bp.post("/<oid>/rent/pay")
-def initial_rent_pay(oid):
-    o = order_repo.get(oid)
-    if not o:
-        return fail(404, "订单不存在")
-    if o.get("user_id") != current_user_id():
-        return fail(403, "无权操作该订单")
-    if o.get("status") == "audit" and o.get("rent_paid_at"):
-        return ok({"already_paid": True, "order": _enrich(o)}, "租金已支付")
-    if o.get("status") != "pay":
-        return fail(1, "当前订单已不可支付租金")
-    amount = float(o.get("amount") or 0)
-    if amount <= 0:
-        return fail(1, "订单租金异常，请联系客服")
-
-    out_trade_no = _rent_trade_no(o)
-    order_repo.update(oid, {
-        "rent_out_trade_no": out_trade_no,
-        "rent_trade_status": "WAIT_BUYER_PAY",
-    })
-    try:
-        from app.alipay_client import get_client
-        pay = get_client().trade_create(
-            out_trade_no, amount, f"{o.get('product_name') or '租赁订单'} - 租金",
-            buyer_id=current_user_id(),
-            body=f"订单 {oid} 首期租金",
-        )
-        return ok({**pay, "out_trade_no": out_trade_no})
-    except Exception as e:
-        order_repo.update(oid, {"rent_trade_status": "FAILED", "rent_payment_error": str(e)[:500]})
-        return fail(1, f"创建租金支付失败：{e}")
-
-
-@bp.post("/<oid>/rent/query")
-def initial_rent_query(oid):
-    o = order_repo.get(oid)
-    if not o:
-        return fail(404, "订单不存在")
-    if o.get("user_id") != current_user_id():
-        return fail(403, "无权操作该订单")
-    if o.get("rent_paid_at"):
-        return ok({"is_paid": True, "order": _enrich(o)})
-    try:
-        from app.alipay_client import get_client
-        q = get_client().trade_query(out_trade_no=_rent_trade_no(o))
-        trade_status = (q.get("trade_status") or "").upper()
-        order_repo.update(oid, {"rent_trade_status": trade_status, "rent_payment_raw": q})
-        if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED"):
-            o = complete_initial_rent(
-                _rent_trade_no(o), trade_no=q.get("trade_no") or "", raw=q,
-            ) or o
-        return ok({"is_paid": bool(o.get("rent_paid_at")), "trade_status": trade_status, "order": _enrich(o)})
-    except Exception as e:
-        return fail(1, f"查询租金支付结果失败：{e}")
 
 
 # ---------- 创建 / 取消 ----------
@@ -816,6 +766,7 @@ def create_order():
         "price_per_day": first_unit_price(tiers),
         "days": days,
         "amount": amount,
+        "initial_rent_amount": amount,
         "original_amount": original_amount,
         "price_tiers": tiers,
         "start_date": start_date,
@@ -862,9 +813,8 @@ def create_order():
 @bp.post("/<oid>/cancel")
 def cancel(oid):
     """用户自助取消订单。按当前状态分流：
-      pay            → cancelled（尚未收租金、尚未发起免押）
-      audit          → cancelled；发起过冻结的先向支付宝对账，已冻结的先解冻再取消
-                       （用户可能付款途中取消，"无冻结物"不再必然成立）
+      audit          → 未冻结则直接 cancelled；已冻结或冻结结果暂无法确认时，
+                       提交 pending_cancel 等后台人工审批
       send           → 提交取消申请 → pending_cancel（待商家审核）
                        商家在后台同意后才会调 unfreeze 真正解冻+取消
       pending_cancel → 已提交过申请，幂等返回
@@ -878,45 +828,39 @@ def cancel(oid):
     status = o.get("status")
     now = int(time.time())
 
-    if status == "pay":
-        # 发起过租金支付时先向支付宝对账，避免回调延迟时误取消已付款订单。
-        if (o.get("rent_out_trade_no") or "").strip():
-            try:
-                from app.alipay_client import get_client
-                q = get_client().trade_query(out_trade_no=_rent_trade_no(o))
-                if (q.get("trade_status") or "").upper() in ("TRADE_SUCCESS", "TRADE_FINISHED"):
-                    complete_initial_rent(
-                        _rent_trade_no(o), trade_no=q.get("trade_no") or "", raw=q,
-                    )
-                    return fail(1, "租金已支付，订单不能直接取消；如需取消请联系客服")
-            except Exception as e:
-                return fail(1, f"正在核对租金支付结果，暂时无法取消：{e}")
-        updated = update_order(oid, {
-            "status": "cancelled", "cancel_reason": reason,
-            "cancelled_at": now,
-        }, sync_reason="cancel_before_rent_paid")
-        _refund_coupon_if_any(o)
-        return ok(updated, "订单已取消")
-
     if status == "audit":
-        # 对账/解冻失败不阻塞取消：迟到的冻结成功通知会命中 notify 侧
-        # "已取消订单自动解冻"兜底，资金不会悬挂
+        # audit 不等于未付款：首期租金结算失败时押金已经冻结，但订单仍停在
+        # audit。只要已冻结或暂时无法确认，就必须进入后台人工审批，不能在
+        # C 端直接解冻/退款/关单。
+        freeze_needs_review = bool((o.get("alipay_auth_no") or "").strip())
         if int(o.get("alipay_freeze_attempts") or 0) > 0:
             try:
                 from app.routes.alipay import (
-                    query_active_freeze, is_frozen,
-                    dispatch_auto_unfreeze, freeze_pool_amount,
+                    is_frozen, mark_freeze_success, query_active_freeze,
                 )
                 res = query_active_freeze(o)
                 if is_frozen(res):
-                    dispatch_auto_unfreeze(
-                        o,
-                        (res.get("auth_no") or o.get("alipay_auth_no") or "").strip(),
-                        freeze_pool_amount(o, res.get("amount")),
-                        reason="user_cancel_frozen",
-                    )
+                    freeze_needs_review = True
+                    mark_freeze_success(oid, o)
+                    if res.get("auth_no") and not (o.get("alipay_auth_no") or "").strip():
+                        order_repo.update(oid, {"alipay_auth_no": res["auth_no"]})
+                else:
+                    freeze_needs_review = False
             except Exception:
-                pass
+                # 查询失败时宁可进入人工审核，也不能把可能已经冻结押金的订单
+                # 当作未付款单直接关掉。
+                freeze_needs_review = True
+        if freeze_needs_review:
+            updated = update_order(oid, {
+                "status": "pending_cancel",
+                "cancel_requested_at": now,
+                "cancel_reason": reason,
+                "cancel_requested_by": "user",
+                "cancel_source_status": "audit_frozen",
+                "cancel_refund_rent": True,
+            }, sync_reason="request_cancel")
+            return ok(updated, "取消申请已提交，等待商家审核")
+
         refunded, refund_err = refund_initial_rent(o)
         if not refunded:
             return fail(1, f"租金退款未完成，已中止取消：{refund_err}")
@@ -930,6 +874,11 @@ def cancel(oid):
             "status": "pending_cancel",
             "cancel_requested_at": now,
             "cancel_reason": reason,
+            "cancel_requested_by": "user",
+            "cancel_source_status": "send",
+            # 待发货阶段尚未履约：工作人员同意取消后，押金解冻，
+            # 已实际收取的首期租金原路全额退回（0 元租金会幂等跳过支付宝）。
+            "cancel_refund_rent": True,
         }, sync_reason="request_cancel")
         return ok(updated, "取消申请已提交，等待商家审核")
 
@@ -1061,7 +1010,7 @@ def _capture_initial_rent_from_auth(order: dict) -> tuple[bool, str]:
         "rent_out_trade_no": out_trade_no,
         "rent_trade_status": "PROCESSING",
         "rent_capture_attempts": int(order.get("rent_capture_attempts") or 0) + 1,
-        # 供定时重试算退避间隔；也让运营一眼看到"最后一次尝试是什么时候"
+        # 留给运营判断最后一次人工/首次自动尝试的时间。
         "rent_capture_last_at": now,
     })
 
@@ -1144,52 +1093,80 @@ def _capture_initial_rent_from_auth(order: dict) -> tuple[bool, str]:
     return False, err
 
 
-def transition_freeze_done(out_order_no: str) -> dict | None:
+def transition_freeze_done(out_order_no: str, *, retry_failed_capture: bool = False) -> dict | None:
     """综合授权成功 → 自动收租金 → audit → send。
-    租金未确认到账时严禁扣库存和进待发货。
+    押金未确认冻结、租金未确认到账时，一律严禁扣库存和进待发货。
+
+    首次授权通知只自动尝试一次。失败后 notify 重放、用户查询和定时对账都只
+    返回当前异常状态；客服与客户沟通确认后，后台手动入口显式传
+    retry_failed_capture=True 才允许再次发起/查询固定交易号。
     """
     oid = order_id_from_out_order_no(out_order_no)
     o = order_repo.get(oid)
     if not o or o.get("status") != "audit":
         return o
+    if (int(o.get("rent_capture_attempts") or 0) > 0
+            and not o.get("rent_paid_at") and not retry_failed_capture):
+        logger.warning("freeze_done: 订单 %s 首期租金此前已尝试，等待客服沟通后人工重试", oid)
+        return o
+    # 【发货前的资金硬闸】押金没真冻住，绝不许扣库存、进待发货。
+    # 放在函数入口而不是各调用方：通知 / 前端查询 / 后台人工重试任意一处漏判都穿不过来。
+    # 事故复盘（O6E5AB9BC2F15，2026-08-03）：当时的判据是"订单上有 alipay_auth_no"，
+    # 而授权单 INIT 阶段就有授权号，一笔从未授权成功的 0 元租金单被判成"押金已冻结"，
+    # 又因 amount<=0 在 capture 里直接短路返回成功，一路扣库存进了待发货。
+    # 没有确凿证据就现场问一次支付宝；查询失败按"未冻结"处理，留在 audit 等下次。
+    from app.routes.alipay import (
+        freeze_confirmed, is_frozen, mark_freeze_success, query_active_freeze,
+    )
+    if not freeze_confirmed(o):
+        try:
+            res = query_active_freeze(o)
+        except Exception as e:
+            logger.warning("freeze_done: 订单 %s 冻结状态查询失败，本次不推进：%s", oid, e)
+            return o
+        if not is_frozen(res):
+            logger.warning(
+                "freeze_done: 订单 %s 押金未冻结（授权单状态 %s），拒绝推进待发货",
+                oid, res.get("status") or "?",
+            )
+            return o
+        mark_freeze_success(oid, o)
+        o = order_repo.get(oid) or o
     captured, err = _capture_initial_rent_from_auth(o)
     if not captured:
         logger.warning("freeze_done: 订单 %s 授权成功但租金转支付未完成: %s", oid, err)
         return order_repo.get(oid)
-    o = order_repo.get(oid) or o
-    # 综合授权 + 租金收款均成功 = 设备正式被占用，此刻才扣 1 库存。
-    # 放在这个 transition 里而非下单时：① 只有真正免押成功的单才占库存，未完成免押的
-    # 不挤占；② 本函数已用 status==audit 做了幂等闸，支付宝重发 freeze 通知不会重复扣。
-    # 归还/取消不在此自动加回，由后台人工调整库存（按业务约定）。
-    # 有 SKU 的订单扣 SKU 库存，没有的扣商品库存。两边都走同一个原子条件更新，
-    # 扣不动（余量已为 0）只告警不阻断发货，与改造前行为一致。
-    sku_id = int(o.get("sku_id") or 0)
-    pid = o.get("product_id")
-    if sku_id:
-        left = sku_repo.try_decrement(sku_id, "stock", by=1, floor=0)
-        if left is None:
-            import logging
-            logging.getLogger(__name__).warning(
-                "freeze_done: 订单 %s SKU %s(%s) 免押成功但库存已为 0，未扣减（请后台核对）",
-                oid, sku_id, o.get("sku_name") or "",
-            )
-        # SKU 是销量的唯一数据源；一张免押成功的订单计 1 件。
-        # status==audit 是幂等闸，顺序重放支付宝回调不会重复累加。
-        sku_repo.increment(sku_id, "sales", by=1)
-    elif pid:
-        left = product_repo.try_decrement(pid, "stock", by=1, floor=0)
-        if left is None:
-            import logging
-            logging.getLogger(__name__).warning(
-                "freeze_done: 订单 %s 商品 %s 免押成功但库存已为 0，未扣减（请后台核对）",
-                oid, pid,
-            )
-        # 无 SKU 历史数据的极端兜底。
-        product_repo.increment(pid, "sales", by=1)
-    return update_order(oid, {
-        "status": "send",
-        "send_at": int(time.time()),
-    }, sync_reason="freeze_done")
+    # 网络调用后再进入本地终态临界区，并在锁内重新读状态。
+    # notify 与前端 query 同时到达时，只允许第一个线程扣库存/加销量。
+    with _freeze_transition_lock:
+        o = order_repo.get(oid) or o
+        if o.get("status") != "audit":
+            return o
+        if not o.get("rent_paid_at"):
+            logger.warning("freeze_done: 订单 %s capture 返回成功但未落 rent_paid_at，拒绝发货", oid)
+            return o
+        sku_id = int(o.get("sku_id") or 0)
+        pid = o.get("product_id")
+        if sku_id:
+            left = sku_repo.try_decrement(sku_id, "stock", by=1, floor=0)
+            if left is None:
+                logger.warning(
+                    "freeze_done: 订单 %s SKU %s(%s) 免押成功但库存已为 0，未扣减（请后台核对）",
+                    oid, sku_id, o.get("sku_name") or "",
+                )
+            sku_repo.increment(sku_id, "sales", by=1)
+        elif pid:
+            left = product_repo.try_decrement(pid, "stock", by=1, floor=0)
+            if left is None:
+                logger.warning(
+                    "freeze_done: 订单 %s 商品 %s 免押成功但库存已为 0，未扣减（请后台核对）",
+                    oid, pid,
+                )
+            product_repo.increment(pid, "sales", by=1)
+        return update_order(oid, {
+            "status": "send",
+            "send_at": int(time.time()),
+        }, sync_reason="freeze_done")
 
 
 def transition_unfreeze_done(out_order_no: str) -> dict | None:
@@ -1201,30 +1178,37 @@ def transition_unfreeze_done(out_order_no: str) -> dict | None:
     幂等：支付宝可能重发通知；终态再调一次只命中 if 之外的早退分支，不会重复退券/重复 sync。
     """
     oid = order_id_from_out_order_no(out_order_no)
-    o = order_repo.get(oid)
-    if not o:
-        return None
-    status = o.get("status")
-    if status == "pending_cancel":
-        refunded, refund_err = refund_initial_rent(o)
-        if not refunded:
-            order_repo.update(oid, {"rent_refund_error": refund_err})
-            return o
-        updated = update_order(oid, {
-            "status":       "cancelled",
-            "cancelled_at": int(time.time()),
-            # 后台强制取消（admin_force）在下发解冻时已写 cancelled_by，不覆盖；
-            # 用户申请-商家同意的链路没写过，落默认 admin_approve
-            "cancelled_by": o.get("cancelled_by") or "admin_approve",
-        }, sync_reason="admin_cancel_approve")
-        _refund_coupon_if_any(o)
-        return updated
-    if status in ("return", "overdue", "using", "return_inspecting"):
-        return update_order(oid, {
-            "status":      "done",
-            "returned_at": o.get("returned_at") or int(time.time()),
-        }, sync_reason="return_done")
-    return o
+    with _unfreeze_transition_lock:
+        o = order_repo.get(oid)
+        if not o:
+            return None
+        status = o.get("status")
+        if status == "pending_cancel":
+            # 先记录“押金释放环节已完成”，再退租金。即使退款失败，
+            # 后台/定时任务也能明确只重试租金退款，绝不再解冻一次。
+            if not o.get("unfreeze_completed_at"):
+                o = order_repo.update(oid, {"unfreeze_completed_at": int(time.time())}) or o
+            # 只有明确属于“履约前取消”的订单才退首期租金。正常归还不会进入
+            # pending_cancel；历史上来源不明的后台强制取消也不能据此误退全额租金。
+            from app.scheduler import cancel_requires_rent_refund
+            if cancel_requires_rent_refund(o):
+                refunded, refund_err = refund_initial_rent(o)
+                if not refunded:
+                    return order_repo.update(oid, {"rent_refund_error": refund_err})
+            updated = update_order(oid, {
+                "status":       "cancelled",
+                "cancelled_at": int(time.time()),
+                "cancelled_by": o.get("cancelled_by") or "admin_approve",
+            }, sync_reason="admin_cancel_approve")
+            _refund_coupon_if_any(o)
+            return updated
+        if status in ("return", "overdue", "using", "return_inspecting"):
+            return update_order(oid, {
+                "status":      "done",
+                "returned_at": o.get("returned_at") or int(time.time()),
+                "unfreeze_completed_at": o.get("unfreeze_completed_at") or int(time.time()),
+            }, sync_reason="return_done")
+        return o
 
 
 def transition_auth_pay_done(out_order_no: str) -> dict | None:
@@ -1237,11 +1221,6 @@ def transition_auth_pay_done(out_order_no: str) -> dict | None:
         return update_order(oid, {"status": "return"},
                             sync_reason="auth_pay_done")
     return o
-
-
-def transition_trade_paid(out_trade_no: str) -> dict | None:
-    """普通交易支付成功；先分流首期租金，再兼容续租单。"""
-    return complete_initial_rent(out_trade_no) or complete_renewal(out_trade_no)
 
 
 def transition_trade_refunded(out_trade_no: str) -> dict | None:

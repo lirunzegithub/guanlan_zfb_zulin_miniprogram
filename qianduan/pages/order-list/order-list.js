@@ -2,7 +2,7 @@ const { get, post } = require('../../utils/request.js');
 const requireRealName = require('../../utils/realname.js');
 
 const STATUS_TEXT = {
-  pay: '待支付', audit: '待免押',
+  audit: '待免押',
   send: '待发货', pending_cancel: '取消审核中',
   recv: '待收货', using: '租赁中',
   return: '待归还', overdue: '已逾期',
@@ -15,7 +15,6 @@ const STATUS_TEXT = {
 // audit（待免押）提供"去免押 / 付押金"：用户中途退出后可随时回来继续支付，
 // 后端按已发起次数续号（_A2/_A3…）支持重复拉起收银台
 function actionFor(status) {
-  if (status === 'pay')            return { key: 'rent', label: '支付租金', primary: true };
   if (status === 'audit')          return { key: 'credit', label: '去免押 / 付押金', primary: true };
   if (status === 'send')           return { key: 'detail', label: '查看物流', primary: false };
   if (status === 'pending_cancel') return { key: 'detail', label: '查看进度', primary: false };
@@ -45,7 +44,7 @@ Page({
   },
   onLoad(q) {
     if (q && q.key) {
-      const map = { pay: 'pay', send: 'send', recv: 'recv', using: 'using', all: 'all' };
+      const map = { audit: 'audit', send: 'send', recv: 'recv', using: 'using', all: 'all' };
       this.setData({ cur: map[q.key] || q.key });
     }
     this.loadTabs().then(() => this.loadList());
@@ -74,7 +73,7 @@ Page({
           _amountText: (o.amount || 0).toFixed(2),
           _shortName: shortName(o.product_name) + ' 租赁',
           _action: actionFor(o.status),
-          _canCancel: ['audit', 'pay'].includes(o.status),
+          _canCancel: o.status === 'audit',
         };
       });
       this.setData({ list, loaded: true });
@@ -118,12 +117,12 @@ Page({
   },
   async onAction(e) {
     const { id, key } = e.currentTarget.dataset;
-    // 租金支付/免押入口先过实名，其余动作直接跳详情页自处理
-    if (key === 'credit' || key === 'rent') {
+    // 免押入口先过实名，其余动作直接跳详情页自处理
+    if (key === 'credit') {
       const ok = await requireRealName();
       if (!ok) return;
     }
-    const suffix = key === 'credit' ? '&credit=1' : (key === 'rent' ? '&rent=1' : '');
+    const suffix = key === 'credit' ? '&credit=1' : '';
     my.navigateTo({ url: '/pages/order-detail/order-detail?id=' + id + suffix });
   },
 });

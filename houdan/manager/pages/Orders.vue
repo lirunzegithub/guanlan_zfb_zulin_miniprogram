@@ -36,7 +36,7 @@
           <th style="width:70px">年龄</th>
           <th style="width:80px">天数</th>
           <th style="width:110px">下单租金</th>
-          <th style="width:110px">押金</th>
+          <th style="width:130px">押金剩余</th>
           <th style="width:170px">下单时间</th>
           <th style="width:180px">最新备注</th>
           <th style="width:90px">状态</th>
@@ -94,7 +94,10 @@
             </div>
           </td>
           <td>
-            <div>¥{{ fmt(o.deposit_freeze) }}</div>
+            <!-- 显示"现在还冻着多少"而不是下单时冻了多少：扣过款的订单两者不同，
+                 按下单额判断还能扣多少会超额。副行补出原额/已扣、未冻结、已解冻。 -->
+            <div>¥{{ fmt(o.deposit_remaining) }}</div>
+            <div v-if="depositNote(o)" class="muted small">{{ depositNote(o) }}</div>
             <div
               v-if="o.freeze_active"
               :class="['freeze-countdown', { warn: o.freeze_warn, expired: o.freeze_expired }]"
@@ -118,7 +121,9 @@
             <span v-else class="muted">—</span>
           </td>
           <td>
-            <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error">{{ o.status_label }}</span>
+            <span :class="['tag', orderStatusCls(o)]" :title="o.rent_capture_error || o.cancel_refund_error">{{ o.status_label }}</span>
+            <!-- 已发货/在租却查不到冻结成功凭证：零担保，优先级高于一切状态标签 -->
+            <span v-if="o.freeze_missing" class="tag tag-red" title="订单已进入待发货及之后，但查不到押金冻结成功记录，请立即核实">押金未确认冻结</span>
           </td>
           <td>
             <button class="btn-link" @click="openDetail(o)">详情</button>
@@ -129,15 +134,22 @@
               @click="retryRentCapture(o)"
             >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
             <button
+              v-if="o.cancel_refund_pending"
+              class="btn-link primary"
+              :disabled="retryingRefund === o.id"
+              @click="retryCancelRefund(o)"
+            >{{ retryingRefund === o.id ? '退款中…' : '重试租金退款' }}</button>
+            <button
               v-if="o.status === 'send'"
               class="btn-link primary"
               @click="openShip(o)"
             >发货</button>
-            <template v-if="o.status === 'pending_cancel' && !o.unfreeze_dispatched_at">
+            <template v-if="o.cancel_approval_allowed && !o.unfreeze_dispatched_at">
               <button class="btn-link primary" @click="approveCancel(o)">同意取消</button>
               <button class="btn-link" @click="rejectCancel(o)">驳回</button>
             </template>
-            <span v-else-if="o.status === 'pending_cancel'" class="muted">已下发解冻，待支付宝通知</span>
+            <span v-else-if="o.status === 'pending_cancel' && o.unfreeze_dispatched_at && !o.cancel_refund_pending" class="muted">已下发解冻，待支付宝通知</span>
+            <span v-else-if="o.status === 'pending_cancel' && !o.cancel_approval_allowed" class="muted">取消来源异常，请人工核对</span>
             <template v-if="o.status === 'return_inspecting' && !o.unfreeze_dispatched_at">
               <button class="btn-link primary" @click="approveReturn(o)">核验通过</button>
               <button class="btn-link" @click="rejectReturn(o)">驳回</button>
@@ -204,9 +216,10 @@
             </span>
           </div>
           <div class="oc-row">
-            <span class="oc-k">押金</span>
+            <span class="oc-k">押金剩余</span>
             <span>
-              ¥{{ fmt(o.deposit_freeze) }}
+              ¥{{ fmt(o.deposit_remaining) }}
+              <span v-if="depositNote(o)" class="muted small">（{{ depositNote(o) }}）</span>
               <span
                 v-if="o.freeze_active"
                 :class="['freeze-countdown', { warn: o.freeze_warn, expired: o.freeze_expired }]"
@@ -250,15 +263,22 @@
             @click="retryRentCapture(o)"
           >{{ retryingRent === o.id ? '结算中…' : '重试租金结算' }}</button>
           <button
+            v-if="o.cancel_refund_pending"
+            class="btn-link primary"
+            :disabled="retryingRefund === o.id"
+            @click="retryCancelRefund(o)"
+          >{{ retryingRefund === o.id ? '退款中…' : '重试租金退款' }}</button>
+          <button
             v-if="o.status === 'send'"
             class="btn-link primary"
             @click="openShip(o)"
           >发货</button>
-          <template v-if="o.status === 'pending_cancel' && !o.unfreeze_dispatched_at">
+          <template v-if="o.cancel_approval_allowed && !o.unfreeze_dispatched_at">
             <button class="btn-link primary" @click="approveCancel(o)">同意取消</button>
             <button class="btn-link" @click="rejectCancel(o)">驳回</button>
           </template>
-          <span v-else-if="o.status === 'pending_cancel'" class="muted">已下发解冻，待支付宝通知</span>
+          <span v-else-if="o.status === 'pending_cancel' && o.unfreeze_dispatched_at && !o.cancel_refund_pending" class="muted">已下发解冻，待支付宝通知</span>
+          <span v-else-if="o.status === 'pending_cancel' && !o.cancel_approval_allowed" class="muted">取消来源异常，请人工核对</span>
           <template v-if="o.status === 'return_inspecting' && !o.unfreeze_dispatched_at">
             <button class="btn-link primary" @click="approveReturn(o)">核验通过</button>
             <button class="btn-link" @click="rejectReturn(o)">驳回</button>
@@ -306,13 +326,25 @@
                 支付宝返回：{{ detail.rent_capture_error }}
               </div>
               <div class="muted small">
-                已自动重试 {{ detail.rent_capture_attempts || 0 }} 次（系统每 15 分钟自动重试一次，上限 24 次）
+                系统不会自动重复扣款。请客服先联系客户确认，确认后再由工作人员手动重试；当前共尝试 {{ detail.rent_capture_attempts || 0 }} 次。
               </div>
               <button
                 class="btn btn-sm"
                 :disabled="retryingRent === detail.id"
                 @click="retryRentCapture(detail)"
               >{{ retryingRent === detail.id ? '结算中…' : '重试租金结算' }}</button>
+            </div>
+            <div v-if="detail.cancel_refund_pending" class="rent-stuck">
+              <div>押金已经解冻成功，但首期租金原路退款未完成。系统只会重试退款，不会重复解冻押金。</div>
+              <div v-if="detail.cancel_refund_error" class="rent-stuck-err">
+                支付宝返回：{{ detail.cancel_refund_error }}
+              </div>
+              <div class="muted small">已尝试 {{ detail.rent_refund_attempts || 0 }} 次，后台会自动重试</div>
+              <button
+                class="btn btn-sm"
+                :disabled="retryingRefund === detail.id"
+                @click="retryCancelRefund(detail)"
+              >{{ retryingRefund === detail.id ? '退款中…' : '重试租金退款' }}</button>
             </div>
           </div>
           <div class="field">
@@ -347,6 +379,23 @@
               原价 ¥{{ fmt(detail.original_amount) }}，优惠 -¥{{ fmt(detail.discount_amount) }}
             </div>
             <div class="muted">押金（冻结）¥{{ fmt(detail.deposit_freeze) }}</div>
+            <!-- 扣过款的订单，冻结池里已经不是下单时那个数了，按原额判断可扣余额会超额 -->
+            <div class="muted" v-if="detail.deposit_consumed > 0">
+              当前剩余冻结 ¥{{ fmt(detail.deposit_remaining) }}（已扣 ¥{{ fmt(detail.deposit_consumed) }}）
+            </div>
+          </div>
+          <!-- 已进入待发货及之后，却没有任何"冻结成功"凭证：押金很可能压根没冻上，
+               货一旦寄出就是零担保。必须最显眼地报出来，而不是安静地不显示倒计时。 -->
+          <div class="field" v-if="detail.freeze_missing">
+            <div class="label">押金担保</div>
+            <div class="freeze-countdown-big expired">
+              <b>⚠️ 未确认冻结</b>
+              <span class="muted small">（订单已进入 {{ detail.status_label }}，但查不到冻结成功记录）</span>
+            </div>
+            <div class="muted small">
+              请点下方「支付宝预授权明细 · 刷新」核实：若授权单状态为 INIT/CLOSED、累计冻结 ¥0，
+              说明这笔押金从未冻结成功，需立即联系用户重新授权或走线下处理，切勿发货。
+            </div>
           </div>
           <div class="field" v-if="detail.freeze_active">
             <div class="label">押金授权倒计时</div>
@@ -498,6 +547,11 @@
             </div>
             <div class="muted" v-if="!detail.sync_ok && detail.sync_err" style="margin-top:4px">
               失败原因：{{ detail.sync_err }}
+            </div>
+            <!-- 同步成功但支付宝带回的提示（订单消息未配置 / 用户未授权消息等）。
+                 订单中心状态已经更新，不需要重试，所以不算失败，样式也不用红。 -->
+            <div class="muted" v-else-if="detail.sync_warn" style="margin-top:4px">
+              支付宝提示：{{ detail.sync_warn }}（不影响订单状态同步，无需重试）
             </div>
           </div>
         </div>
@@ -983,7 +1037,6 @@
 const { ref, reactive, computed, inject, onMounted, onUnmounted, nextTick } = Vue;
 
 const STATUS_LABEL = {
-  pay:               '待付租金',
   audit:             '待免押',
   send:              '待发货',
   pending_cancel:    '取消审核中',
@@ -997,7 +1050,6 @@ const STATUS_LABEL = {
 };
 
 const TAGS_BY_STATUS = {
-  pay:               'tag-red',
   audit:             'tag',
   send:              'tag-orange',
   pending_cancel:    'tag-red',
@@ -1013,11 +1065,10 @@ const TAGS_BY_STATUS = {
 // 列表行的快捷操作：按当前状态展示一两个最常用的下一步动作
 // pending_cancel / return_inspecting 走专用按钮（同意/驳回），不放进通用 QUICK_ACTIONS
 const QUICK_ACTIONS = {
-  pay:               [{ to: 'cancelled', label: '取消' }],
   audit:             [{ to: 'cancelled', label: '取消' }],
-  send:              [{ to: 'cancelled', label: '取消' }],
+  send:              [],
   pending_cancel:    [],
-  recv:              [{ to: 'using', label: '标记签收' }, { to: 'cancelled', label: '取消' }],
+  recv:              [{ to: 'using', label: '标记签收' }],
   using:             [{ to: 'return', label: '进入归还' }, { to: 'overdue', label: '标记逾期' }],
   return:            [{ to: 'done', label: '完成订单' }],
   overdue:           [{ to: 'return', label: '已归还' }, { to: 'done', label: '强制完成' }],
@@ -1185,6 +1236,7 @@ export default {
     // 正在重试租金结算的订单号：既用来只 disable 那一行的按钮，
     // 也充当并发闸——一次只跑一单，避免连点把支付宝打满。
     const retryingRent = ref('');
+    const retryingRefund = ref('');
 
     const fmt = (v) => {
       const n = Number(v);
@@ -1209,7 +1261,23 @@ export default {
     // 「押金已冻结但租金没结清」的单一律标红：它挂在 audit 下，但跟"用户还没付款"
     // 是两回事——钱已经冻在支付宝了，运营必须能一眼分辨。
     const orderStatusCls = (o) =>
-      (o && o.rent_capture_pending ? 'tag-red' : statusCls(o && o.status));
+      (o && (o.rent_capture_pending || o.cancel_refund_pending) ? 'tag-red' : statusCls(o && o.status));
+
+    // 押金列的副行说明：押金列本身显示的是"现在还冻着多少"，
+    // 扣过款 / 没冻上 / 已解冻这三种情况都得说清楚，否则一个 ¥0 看不出是哪种。
+    const depositNote = (o) => {
+      if (!o || !Number(o.deposit_pool)) return '';
+      const consumed = Number(o.deposit_consumed) > 0
+        ? `原 ¥${fmt(o.deposit_pool)} · 已扣 ¥${fmt(o.deposit_consumed)}` : '';
+      if (Number(o.deposit_remaining)) return consumed;
+      // 剩余为 0 有两种截然不同的原因，必须分清：
+      //   已解冻 = 钱冻过、已经原路退回用户（正常终态）
+      //   未冻结 = 押金压根没冻上（货若已寄出就是零担保，见 freeze_missing 红标）
+      const released = o.unfreeze_completed_at || o.unfreeze_dispatched_at
+        || o.auto_unfreeze_reason || o.status === 'done' || o.freeze_confirmed;
+      if (!released) return consumed || '未冻结';
+      return consumed ? `${consumed} · 余额已解冻` : '已解冻';
+    };
 
     const countOf = (key) => {
       if (key === 'all') return statsCount.value.total ?? null;
@@ -1766,11 +1834,16 @@ export default {
       }
     };
 
-    // 手动重试「综合授权成功后自动收租金」。
-    // 后端幂等（固定 out_trade_no，先 query 后 pay），点多少次都不会重复扣款；
-    // 收上来即 audit → send，收不上来把支付宝的原话摊给运营看。
+    // 首次自动收租失败后不再由系统循环扣款。客服与客户沟通确认后，
+    // 工作人员才从这里手动重试；固定 out_trade_no 保证不会生成重复交易。
     const retryRentCapture = async (o) => {
       if (!o || retryingRent.value) return;
+      const rent = Number(o.initial_rent_amount ?? o.amount ?? 0);
+      if (!confirm(
+        `确认已与客户沟通，并重新发起首期租金扣款？\n\n` +
+        `订单：${o.id}\n本次将向支付宝查询或扣取：¥${rent.toFixed(2)}\n\n` +
+        `支付宝确认成功后，订单会自动更新为「待发货」。`
+      )) return;
       retryingRent.value = o.id;
       try {
         const r = await api.retryRentCapture(o.id);
@@ -1787,6 +1860,25 @@ export default {
         alert(e.message || '重试失败');
       } finally {
         retryingRent.value = '';
+      }
+    };
+
+    // 押金已解冻的单只重试租金退款；后端固定退款请求号保证幂等。
+    const retryCancelRefund = async (o) => {
+      if (!o || retryingRefund.value) return;
+      retryingRefund.value = o.id;
+      try {
+        const r = await api.retryCancelRefund(o.id);
+        if (detail.value && detail.value.id === o.id) {
+          detail.value = { ...detail.value, ...r };
+        }
+        await reload();
+        if (r.status === 'cancelled') alert('租金已原路退回，订单已取消');
+        else alert(`退款仍未完成：${r.cancel_refund_error || '支付宝未确认退款成功'}`);
+      } catch (e) {
+        alert(e.message || '重试退款失败');
+      } finally {
+        retryingRefund.value = '';
       }
     };
 
@@ -1826,14 +1918,13 @@ export default {
       } catch (e) { alert(e.message || '操作失败'); }
     };
 
-    // 后台主动取消订单：先弹窗确认（会解冻客户押金），再调 admin-cancel。
+    // 后台主动取消仅用于待免押订单；已付押金的订单必须由用户申请后人工审批。
     const forceCancel = async (o) => {
-      const frozen = Number(o.freeze_amount || o.deposit_freeze || 0);
-      const amountLine = frozen > 0 ? `\n本单已冻结押金约 ¥${frozen.toFixed(2)}，取消后将下发解冻。` : '';
       if (!confirm(
         `⚠️ 取消订单 ${o.id}\n\n` +
-        `取消会解冻客户押金，请务必确认该订单尚未发货 / 已收回货物后再操作！${amountLine}\n\n` +
-        `确认继续取消并解冻押金？`
+        `该入口仅用于尚未成功冻结押金的待免押订单。系统会先核对支付宝资金状态；` +
+        `若押金已经冻结，将拒绝直接取消，必须让用户提交取消申请后再审批。\n\n` +
+        `确认核对并取消？`
       )) return;
       try {
         await api.adminForceCancel(o.id);
@@ -1846,7 +1937,23 @@ export default {
     // 回来才会推到 cancelled；商家这里只触发解冻请求下发。
     const approveCancel = async (o) => {
       const userMsg = o.cancel_reason ? `用户填写理由：${o.cancel_reason}\n\n` : '';
-      if (!confirm(`${userMsg}同意取消订单 ${o.id}？\n将下发解冻请求；支付宝异步确认后订单会自动置为已取消。`)) return;
+      const frozen = Number(o.cancel_freeze_release_amount || 0);
+      const deposit = Number(o.cancel_deposit_release_amount || 0);
+      const initialRent = Number(o.cancel_initial_rent_amount || 0);
+      const rent = Number(o.cancel_rent_refund_amount || 0);
+      const freezeDetail = Math.abs(frozen - deposit) >= 0.01
+        ? `（押金 ¥${deposit.toFixed(2)}，未扣租金仍在冻结池内）`
+        : `（押金 ¥${deposit.toFixed(2)}）`;
+      const rentLine = o.cancel_rent_was_paid && rent > 0
+        ? `• 原路退还首期租金 ¥${rent.toFixed(2)}`
+        : initialRent > 0
+          ? `• 首期租金 ¥${initialRent.toFixed(2)} 未扣成功，无需退款`
+          : '• 本单首期租金为 ¥0.00，无需退款';
+      if (!confirm(
+        `${userMsg}同意取消订单 ${o.id}？\n\n` +
+        `确认后系统将：\n• 释放支付宝冻结额度 ¥${frozen.toFixed(2)} ${freezeDetail}\n${rentLine}\n\n` +
+        `若押金已解冻但租金退款失败，订单会保留异常状态供单独重试。`
+      )) return;
       try {
         await api.approveOrderCancel(o.id);
         await reload();
@@ -1966,7 +2073,8 @@ export default {
       openShip, closeShip, onWaybillInput, submitShip,
       uiCfg, onHuohaoInput, invPics, invCover, rentActionLabel, rentRecordText, fillWaybillFromRent,
       resyncing, resync,
-      retryingRent, retryRentCapture, orderStatusCls,
+      retryingRent, retryRentCapture, retryingRefund, retryCancelRefund, orderStatusCls,
+      depositNote,
       approveCancel, rejectCancel,
       approveReturn, rejectReturn,
       adminReturnForm, openAdminReturnShip, closeAdminReturnShip, submitAdminReturnShip,
