@@ -62,6 +62,15 @@ def _log_notify(channel: str, params: dict, verified: bool, business_ok: bool, e
 # 比对。支付宝 alipay.user.certify.open.* 本身就闭环负责实人核验
 # （人脸 ↔ 身份证照片 ↔ 公安库），不需要前置比对。
 
+# certify_id 在支付宝侧的存活规则（务必跟"认证通过后 3 个月免重复 KYC"区分开，
+# 后者说的是认证**结果**可复用，不是这个 id 还能再唤起一次人脸）：
+#   · initialize 之后一直没认证 → 23 小时有效，超时作废
+#   · 一旦走完一次认证（通过或失败）→ 该 id 即被消费，不能再次唤起
+# 拿作废/已消费的 id 去 certify.open 生成 URL，唤起时支付宝端会直接落到
+# 「身份验证失败 - 人气大爆发，一会再试试」兜底页。这里留 1 小时余量，
+# 避免卡在过期边界上把废 id 发给前端。
+CERTIFY_ID_TTL = 22 * 3600
+
 
 @bp.post("/certify/init")
 def certify_init():
@@ -69,10 +78,10 @@ def certify_init():
 
     返回 certify_id 给前端，前端调 my.startAPVerify({certifyId}) 唤起活体页。
 
-    复用策略：
-      - 同一 user 行如果有 last_certify_id 且 < 3 个月 → 直接复用，**不再调 init**，
-        省一次 KYC 费用。
-      - 23 小时未认证窗口里复用也安全（支付宝侧 certify_id 在此期间有效）。
+    复用策略（见上方 CERTIFY_ID_TTL 注释）：
+      - 仅当旧 certify_id **没被消费过**且仍在 23 小时窗口内才复用，省一次 KYC 费用。
+        典型场景：用户上次拿到 id 后取消了 / 中途退出，压根没走完认证。
+      - 认证跑完一次（certify/query 拿到结论）就标记已消费，下次必定重新 init。
       - 用户重新提交不同姓名/身份证 → 强制重新 init（cert_no 跟 init 时绑定）。
     """
     body = request.get_json(silent=True) or {}
@@ -87,9 +96,11 @@ def certify_init():
     old_at    = int(u.get("last_certify_at") or 0)
     old_name  = (u.get("real_name") or "").strip()
     old_card  = (u.get("id_card") or "").strip()
-    # 复用条件：身份信息没变 + 3 个月内 (90 天)
+    # 老数据没有 last_certify_used 字段，无从判断是否已消费 → 保守当作已消费
+    old_used  = u.get("last_certify_used", True)
+    # 复用条件：身份信息没变 + 旧 id 未被消费 + 还在 23 小时有效期内
     reusable = (old_id and old_name == name and old_card == id_card
-                and (now - old_at) < 90 * 24 * 3600)
+                and not old_used and (now - old_at) < CERTIFY_ID_TTL)
 
     client = get_client()
 
@@ -126,10 +137,11 @@ def certify_init():
         return fail(20014, f"调用支付宝失败（certify.open）：{e}")
 
     update_current_user({
-        "real_name":       name,
-        "id_card":         id_card,
-        "last_certify_id": certify_id,
-        "last_certify_at": now,
+        "real_name":         name,
+        "id_card":           id_card,
+        "last_certify_id":   certify_id,
+        "last_certify_at":   now,
+        "last_certify_used": False,     # 刚建的 id，还没被任何一次认证消费
     })
 
     return ok({
@@ -154,9 +166,15 @@ def certify_query():
     except Exception as e:
         return fail(20022, f"调用支付宝失败：{e}")
 
+    # query 能拿到结论 = 用户确实走完了一次认证 → 这个 certify_id 已被支付宝消费掉，
+    # 不能再唤起第二次；标记后下次 certify_init 会强制重新 initialize。
+    patch = {}
+    if (current_user().get("last_certify_id") or "").strip() == certify_id:
+        patch["last_certify_used"] = True
     if res.get("passed"):
-        patch = {"verified": True}
+        patch["verified"] = True
         if body.get("phone"): patch["phone"] = body["phone"]
+    if patch:
         update_current_user(patch)
     return ok({
         "certify_id":  certify_id,

@@ -177,10 +177,15 @@ user_repo = SqliteRepository(
         "nickname": "", "avatar": "",
         "real_name": "", "phone": "", "id_card": "",
         "verified": False,
-        # 支付宝实名认证 certify_id 复用：通过后 3 个月内对同一用户复用不重复 KYC。
-        # last_certify_at = 上次 initialize 时间戳；用于 certify_init 决策是否走旧 id。
+        # 支付宝实人认证的 certify_id 复用状态（跟"认证通过后 3 个月免重复 KYC"不是一回事）：
+        #   last_certify_id    上次 initialize 拿到的 certify_id
+        #   last_certify_at    上次 initialize 的时间戳，用来算 23 小时有效期
+        #   last_certify_used  该 id 是否已被消费（已走完一次认证，无论通过与否）
+        # 只有"未消费且未过期"的 id 才允许复用；默认 True 表示"没有可复用的 id"，
+        # 只有 certify_init 新建 id 时才显式写 False。
         "last_certify_id": "",
         "last_certify_at": 0,
+        "last_certify_used": True,
     },
     id_type="str",
 )
