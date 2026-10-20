@@ -160,7 +160,17 @@ Scan to add, note "Commercial License" (商用授权)
 
 Don't want to deal with servers / domains / nginx / Alipay configuration yourself?
 
-**Paid deployment service: ¥150 per deployment** — includes backend go-live, HTTPS, and Alipay callback configuration & testing. Ready to use once done.
+Paid deployment services:
+
+| Service | Price | Turnaround |
+|---|---|---|
+| Backend deployment (you have a server and domain) | ¥150 | 1 day |
+| Backend deployment (no server or domain) | ¥300 | 1 week |
+| Alipay-side setup | ¥1000 | 1 week |
+
+**Alipay-side setup** covers the full process: account registration, mini-program registration & ICP filing, logo design, enabling Alipay Zhima deposit-free products, frontend/backend certificate configuration, getting the user agreement and privacy policy approved, mini-program listing review, and enabling pre-authorization deductions.
+
+For custom development, send your requirements via direct message.
 Contact via the WeChat above.
 
 ---
