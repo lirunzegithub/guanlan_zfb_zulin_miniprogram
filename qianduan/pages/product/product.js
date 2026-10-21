@@ -3,6 +3,7 @@ const requireLogin = require('../../utils/login.js');
 // 计价 / 日期工具集中在 utils/pricing.js：本页（选租期）和确认订单页（算实付）
 // 必须用同一份算法，否则两页显示的金额会对不上。
 const pricing = require('../../utils/pricing.js');
+const brand = require('../../utils/brand.js');
 
 const fmtAmount = pricing.fmtAmount;
 
@@ -458,7 +459,7 @@ Page({
   onCopyLink() {
     const p = this.data.p || {};
     const cached = this._shareInfo || {};
-    const title = cached.title || p.name || '观澜数码租赁';
+    const title = cached.title || p.name || brand.name();
     const desc = cached.desc || (p.min_price ? `¥${p.min_price}/天起` : '芝麻信用免押租赁');
     const path = cached.path || `/pages/product/product?id=${p.id || ''}`;
     const text = `${title}\n${desc}\n${path}`;
@@ -827,7 +828,7 @@ Page({
       };
     }
     return {
-      title: p.name || '观澜数码租赁',
+      title: p.name || brand.name(),
       desc: p.min_price ? `¥${p.min_price}/天起` : '芝麻信用免押租赁',
       path: `/pages/product/product?id=${p.id || ''}`,
       imageUrl: p.cover_url || '',

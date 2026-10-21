@@ -10,7 +10,7 @@
       <view class="u-name">{{displayName}}</view>
       <view class="u-sub">
         <text a:if="{{user.verified}}">{{displaySub}}</text>
-        <text a:else>欢迎使用观澜数码租赁~</text>
+        <text a:else>欢迎使用{{brand}}~</text>
       </view>
     </view>
   </view>

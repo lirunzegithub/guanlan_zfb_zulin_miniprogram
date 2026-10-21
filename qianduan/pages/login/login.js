@@ -1,4 +1,5 @@
 const { post } = require('../../utils/request.js');
+const brand = require('../../utils/brand.js');
 
 const TAB_PATHS = [
   '/pages/index/index',
@@ -10,11 +11,13 @@ const TAB_PATHS = [
 Page({
   data: {
     loading: false,
-    redirect: ''
+    redirect: '',
+    brand: brand.name()
   },
   onLoad(q) {
     const redirect = (q && q.redirect) ? decodeURIComponent(q.redirect) : '';
     this.setData({ redirect });
+    brand.load().then((n) => this.setData({ brand: n }));
   },
 
   // auth_base 静默换 user_id（不弹任何 UI；本应用未开通"获取会员基础信息"，

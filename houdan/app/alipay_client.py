@@ -255,6 +255,8 @@ class RealAlipayClient(BaseAlipayClient):
         return {
             "access_token": body.get("access_token", ""),
             "user_id":      body.get("user_id", ""),
+            # 应用开了 OpenID 模式时支付宝只回 open_id、不回 user_id
+            "open_id":      body.get("open_id", ""),
             "expires_in":   int(body.get("expires_in") or 0),
             "re_expires_in": int(body.get("re_expires_in") or 0),
             "refresh_token": body.get("refresh_token", ""),

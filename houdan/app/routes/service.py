@@ -23,14 +23,13 @@ def _abs_url(url: str) -> str:
 SERVICE_BANNER = {
     "title": "客服中心",
     "sub": "租赁等问题，平台客服在线答疑",
-    "brand": "观澜数码租赁",
 }
 
 
 @bp.get("/info")
 def info():
     return ok({
-        "banner": SERVICE_BANNER,
+        "banner": {**SERVICE_BANNER, "brand": setting_get("app_name") or ""},
         "phone": setting_get("service_phone"),
         "online_enabled": False,
     })
@@ -64,6 +63,8 @@ def public_config():
         # 仅供展示；订单真正的冻结额在建单时落 freeze_amount 快照。
         # 方案 A 固定综合授权，不再对外暴露可变模式。
         "freeze_includes_rent": True,
+        # 小程序名称（导航栏标题 / 登录页 / 协议 / 后台侧栏）
+        "app_name": s.get("app_name") or "",
         # 公司名称（小程序底部 / 后台侧栏底部展示）
         "company_name": s.get("company_name") or "",
         # 软件 LOGO（小程序"我的"头像 / 后台 favicon + 左上角），绝对 URL

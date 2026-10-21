@@ -304,10 +304,6 @@
           <textarea class="textarea" v-model="form.shipping_note"></textarea>
         </div>
         <div class="row" style="gap:12px">
-          <div class="field" style="flex:1">
-            <div class="label">芝麻 serviceId</div>
-            <input class="input" v-model="form.service_id" />
-          </div>
           <div class="field" style="width:140px">
             <div class="label">状态</div>
             <select class="select" v-model="form.status">
@@ -992,7 +988,7 @@ export default {
         deposit_amount: 2000,
         covers: [],
         tip: '', shipping_note: '',
-        service_id: '', status: 'on',
+        status: 'on',
         real_shots: [],
         price_tiers: [{ from: 1, price: 20 }],
       };

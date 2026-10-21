@@ -47,7 +47,7 @@ export const router = createRouter({
 });
 
 router.beforeEach((to, _from, next) => {
-  document.title = `${to.meta.title || '管理后台'} · 观澜数码租赁`;
+  document.title = `${to.meta.title || '管理后台'} · ${window.__APP_NAME__}`;
   const auth = useAuth();
   if (to.meta.requiresAuth !== false && !auth.isLogged()) {
     return next({ path: '/login', query: { from: to.fullPath } });

@@ -1,4 +1,5 @@
 const { get } = require('../../utils/request.js');
+const brand = require('../../utils/brand.js');
 
 Page({
   data: {
@@ -12,6 +13,7 @@ Page({
   },
   // 从实名页 / 我的页返回时，verified 可能刚变，需要重新拉一次
   onShow() {
+    brand.applyTitle();
     this.loadVerified();
   },
   onPullDownRefresh() {

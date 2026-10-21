@@ -48,6 +48,10 @@ def login():
 
     user_id = oauth.get("user_id") or ""
     if not user_id:
+        if oauth.get("open_id"):
+            # 整套系统（建单 buyer_id、订单中心同步等）都按 user_id（2088 开头）设计，
+            # 收到 open_id 说明开放平台把应用的用户标识设成了 OpenID
+            return fail(50002, "支付宝只返回了 open_id：请在开放平台 › 开发设置 › OpenID 配置里把用户标识改为 user_id")
         return fail(50002, "支付宝未返回 user_id")
 
     user = _upsert_user(user_id)

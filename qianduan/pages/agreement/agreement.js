@@ -1,12 +1,15 @@
+const brand = require('../../utils/brand.js');
+
 Page({
   data: {
+    brand: brand.name(),
     version: '1.0',
     updatedAt: '2026-05-16',
     sections: [
       {
         title: '第一条 协议主体与适用范围',
         items: [
-          '1.1 本协议适用于您在「观澜数码租赁」小程序内完成的所有租赁交易，包括但不限于 VR 一体机、投影仪、音响、手持云台、口袋相机、智能吉他等数码产品的短期租赁。',
+          '1.1 本协议适用于您在「__BRAND__」小程序内完成的所有租赁交易，包括但不限于 VR 一体机、投影仪、音响、手持云台、口袋相机、智能吉他等数码产品的短期租赁。',
           '1.2 用户需为具有完全民事行为能力的自然人，未成年人下单视为已取得监护人同意。',
           '1.3 本公司有权对小程序内的商品、价格、活动规则进行调整，调整不影响已生效订单。',
         ],
@@ -106,6 +109,20 @@ Page({
         ],
       },
     ],
+  },
+
+  onLoad() {
+    // 协议正文里的小程序名称跟随后台设置：先用缓存名渲染，拉到最新再刷一次
+    this._rawSections = this.data.sections;
+    this._applyBrand(brand.name());
+    brand.load().then((n) => this._applyBrand(n));
+  },
+  _applyBrand(n) {
+    const sections = this._rawSections.map((sec) => ({
+      ...sec,
+      items: sec.items.map((t) => t.replace('__BRAND__', n)),
+    }));
+    this.setData({ brand: n, sections });
   },
 
   onCall() {

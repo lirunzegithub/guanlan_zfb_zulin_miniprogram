@@ -197,6 +197,11 @@ def stats():
 # 系统字段永远不允许调用方写入；enabled 已废弃（删除=真删）
 _SYSTEM_FIELDS = frozenset({"id", "created_at", "updated_at", "enabled"})
 
+# 注意：芝麻信用借还 SERVICE_ID 是商户主体级资质（开放平台「信用服务管理」创建并审核），
+# 不是商品/分类属性，只在「设置」页配一处（settings.alipay_service_id → AlipayConfig.service_id()）。
+# 商品与分类曾有过同名字段但全链路无读取，已移除，别再加回白名单——填错只会让免押静默
+# 降级成普通押金冻结，前端毫无提示。商品 services 绑定里的 service_id 是「保障服务」自增 ID，
+# 与此无关。
 _ALLOWED = {
     "banners": frozenset({
         "position", "slot", "title", "subtitle",
@@ -207,7 +212,6 @@ _ALLOWED = {
     }),
     "categories": frozenset({
         "name", "parent_id", "icon_url", "cover_url", "description",
-        "service_id", "alipay_category",
         "sort",
     }),
     "products": frozenset({
@@ -215,7 +219,6 @@ _ALLOWED = {
         "cover_url", "cover_bg", "covers",
         "min_price", "rent_unit", "deposit_amount",
         "max_rent_days", "stock", "sales", "rented_count",
-        "service_id",
         "intro", "shipping", "shipping_note",
         "price_tiers",
         "price_curve", "rights", "real_shots", "spec_groups",

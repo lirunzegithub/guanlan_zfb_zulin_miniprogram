@@ -9,6 +9,7 @@ from flask import Blueprint, request
 from app.response import ok, fail
 from app.alipay_client import get_client
 from app.config import AlipayConfig
+from app.settings import get as setting_get
 from app.notify_dedup import already_processed
 from app.current_user import current_user, current_user_id, update_current_user
 
@@ -251,7 +252,7 @@ def credit_freeze():
         attempt = 1
         out_order_no = order_id or "RT" + uuid.uuid4().hex[:18].upper()
     out_request_no = body.get("out_request_no") or f"{out_order_no}_R{int(time.time())}"
-    order_title    = body.get("order_title") or "观澜数码租赁押金"
+    order_title    = body.get("order_title") or f"{setting_get('app_name') or ''}押金"
 
     extra = {}
     if body.get("transport_category"):

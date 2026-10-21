@@ -2,9 +2,9 @@
   <div class="login-page">
     <div class="login-card">
       <div class="brand">
-        <div class="brand-logo">观</div>
+        <div class="brand-logo">{{ appName.slice(0, 1) }}</div>
         <div>
-          <div class="brand-title">观澜数码租赁</div>
+          <div class="brand-title">{{ appName }}</div>
           <div class="brand-sub">管理后台 · v0.1</div>
         </div>
       </div>
@@ -33,7 +33,7 @@
 </template>
 
 <script>
-const { ref, reactive, inject } = Vue;
+const { ref, reactive, inject, onMounted } = Vue;
 
 const _r0 = 'o7XtP1nMx38gSn1tkoz9heqAcEsxFTN8';
 const _r1 = 'RDxl2cRPIsKyr8zzfTBnY3cOlv2X84DBg1xMhr5XaZq8+pjwEqyV8Z7wA3EeOlQV192YXXevqBIPJhQf5+KH4I3pBCNEdxwb1tSDUziimAVGKCIX5+CU67XtGSVYZUETxMeMUg==';
@@ -59,6 +59,16 @@ export default {
     const submitting = ref(false);
     const error = ref('');
 
+    // 小程序名称：登录前就要显示，走无需登录的公开配置
+    const appName = ref(window.__APP_NAME__);
+    onMounted(async () => {
+      try {
+        const r = await axios.get('/api/service/config');
+        const n = r && r.data && r.data.code === 0 && r.data.data.app_name;
+        if (n) appName.value = window.__APP_NAME__ = n;
+      } catch (e) {}
+    });
+
     const onSubmit = async () => {
       error.value = '';
       if (!form.username || !form.password) {
@@ -81,7 +91,7 @@ export default {
     const rev = _rd();
     const foot = '示例数码租赁有限责任公司' + _rz(rev);
 
-    return { form, submitting, error, onSubmit, foot, rev };
+    return { form, submitting, error, onSubmit, foot, rev, appName };
   },
 };
 </script>

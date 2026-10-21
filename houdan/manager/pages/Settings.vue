@@ -110,6 +110,15 @@
       </div>
 
       <div class="form-field">
+        <label class="form-label">小程序名称</label>
+        <input class="input" type="text" v-model.trim="form.app_name" placeholder="如 观澜数码租赁" />
+        <div class="form-hint">
+          小程序首页 / 分类 / 客服 / 我的 的导航栏标题，以及登录页、服务协议、本后台侧栏都用它；改后双端同步生效。<br>
+          支付宝里搜索、授权弹窗显示的小程序名不受这里控制，需在开放平台「小程序信息」里改并过审。
+        </div>
+      </div>
+
+      <div class="form-field">
         <label class="form-label">公司名称</label>
         <input class="input" type="text" v-model.trim="form.company_name" placeholder="如 示例数码租赁有限责任公司" />
         <div class="form-hint">
@@ -452,6 +461,7 @@ export default {
     const form = reactive({
       ship_free_days:       3,
       service_phone:        '',
+      app_name:             '',
       company_name:         '',
       logo_url:             '',
       notify_base:          '',

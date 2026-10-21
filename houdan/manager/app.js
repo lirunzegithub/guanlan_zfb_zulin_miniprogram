@@ -17,6 +17,7 @@ const App = {
 
     // 公司名 + LOGO：读公开配置（无需 admin 权限，operator 也能拿）
     const companyName = ref('海南光影曳动');
+    const appName = ref(window.__APP_NAME__);
     const logoUrl = ref('');
     const _applyFavicon = (url) => {
       if (!url) return;
@@ -34,6 +35,11 @@ const App = {
         const body = r && r.data;
         const cfg = (body && body.code === 0) ? body.data : null;
         if (cfg && cfg.company_name) companyName.value = cfg.company_name;
+        if (cfg && cfg.app_name) {
+          // router.js 拼标签页标题也读这个
+          appName.value = window.__APP_NAME__ = cfg.app_name;
+          document.title = document.title.replace(/[^·]*$/, ' ' + cfg.app_name);
+        }
         if (cfg && cfg.logo_url) {
           logoUrl.value = cfg.logo_url;
           _applyFavicon(cfg.logo_url);   // 浏览器标签页图标
@@ -77,7 +83,7 @@ const App = {
     };
 
     return {
-      auth, menu: visibleMenu, currentTitle, showChrome, onLogout, companyName, logoUrl, sidebarOpen,
+      auth, menu: visibleMenu, currentTitle, showChrome, onLogout, companyName, appName, logoUrl, sidebarOpen,
       pwdModal, pwdForm, pwdSaving, openPwd, savePwd,
     };
   },
@@ -91,7 +97,7 @@ const App = {
       <aside class="sider" :class="{ open: sidebarOpen }">
         <div class="sider-brand">
           <img v-if="logoUrl" :src="logoUrl" class="sider-logo" alt="logo" />
-          观澜数码租赁
+          {{ appName }}
           <small>管理后台</small>
         </div>
         <nav class="sider-nav">

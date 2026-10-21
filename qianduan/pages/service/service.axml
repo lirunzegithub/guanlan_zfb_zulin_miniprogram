@@ -6,7 +6,7 @@
       <view class="b-sub">租赁等问题，平台客服在线答疑</view>
       <view class="b-brand">
         <view class="brand-dot"></view>
-        <text>观澜数码租赁</text>
+        <text>{{brand}}</text>
       </view>
     </view>
     <image class="b-photo" src="/images/kefu.png" mode="aspectFill" />

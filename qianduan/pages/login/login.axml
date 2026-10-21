@@ -2,7 +2,7 @@
   <view class="logo">
     <view class="logo-dot"></view>
   </view>
-  <view class="brand">观澜数码租赁</view>
+  <view class="brand">{{brand}}</view>
   <view class="hint">
     需要授权登录后才能查看订单、收藏、地址等个人信息{{redirect ? '\n登录成功后会回到原页面' : ''}}
   </view>

@@ -55,8 +55,6 @@
 | description     | string  | 分类描述 |
 | sort            | int     | 排序 |
 | enabled         | bool    | |
-| service_id      | string  | 芝麻信用免押产品码（接支付宝时使用） |
-| alipay_category | string  | 支付宝行业类目（如 `RENT_3C`、`RENT_DIGITAL`） |
 | created_at      | int     | |
 | updated_at      | int     | |
 
@@ -86,7 +84,6 @@
 | sales           | int     | 历史销量 |
 | rented_count    | int     | 当前在租数 |
 | credit          | bool    | 是否支持芝麻免押 |
-| service_id      | string  | 芝麻服务码（落库时用） |
 | tip             | string  | 顶部红色提示（"提前归还订单费用不退"） |
 | intro           | string  | 富文本介绍（M 化） |
 | shipping        | string  | 物流说明（"顺丰速运、上门自提"） |

@@ -1,4 +1,5 @@
 const { get } = require('../../utils/request.js');
+const brand = require('../../utils/brand.js');
 const requireLogin = require('../../utils/login.js');
 
 // "进行中的订单" 卡片要隐藏的终态
@@ -99,6 +100,7 @@ Page({
       { key: 'coupon',   name: '优惠券中心', cls: 'coupon' }
     ],
     activeOrders: [],
+    brand: brand.name(),  // 小程序名称（后台系统设置可改），欢迎语用
     companyName: '',   // 公司名（后台系统设置可改），底部展示
     logoUrl: '',       // 软件 LOGO（后台系统设置可改），头像处展示
   },
@@ -112,11 +114,13 @@ Page({
       const patch = {};
       if (c && c.company_name) patch.companyName = c.company_name;
       if (c && c.logo_url) patch.logoUrl = c.logo_url;
+      if (c && c.app_name) patch.brand = c.app_name;
       if (Object.keys(patch).length) this.setData(patch);
     } catch (e) {}
   },
   onShow() {
     console.log('[mine] onShow');
+    brand.applyTitle();
     this.ensureLoginThenLoad();
   },
   onHide()   { this._stopShipTimer(); },

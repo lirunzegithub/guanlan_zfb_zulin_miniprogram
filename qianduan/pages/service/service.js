@@ -1,9 +1,15 @@
 const { get } = require('../../utils/request.js');
+const brand = require('../../utils/brand.js');
 
 Page({
   data: {
     phone: '400-000-0000',
+    brand: brand.name(),
     faqs: []           // 每条来自后端 {id, q, a}；本地额外注入 _expanded 控制展开
+  },
+  onShow() {
+    brand.applyTitle();
+    brand.load().then((n) => this.setData({ brand: n }));
   },
   onLoad() {
     this.loadInfo();

@@ -1,4 +1,5 @@
 const { get } = require('../../utils/request.js');
+const brand = require('../../utils/brand.js');
 
 Page({
   data: {
@@ -9,6 +10,9 @@ Page({
     searching: false,
     searchKeyword: '',
     searchTotal: 0
+  },
+  onShow() {
+    brand.applyTitle();
   },
   onLoad(q) {
     if (q && q.cat) this.setData({ idx: parseInt(q.cat, 10) });
