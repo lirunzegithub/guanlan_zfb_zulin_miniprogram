@@ -3,7 +3,7 @@ const brand = require('../../utils/brand.js');
 
 Page({
   data: {
-    hero: { title: 'Meta Quest 3', sub: '跳进游戏世界' },
+    brand: brand.name(),  // 未配 banner 时占位 hero 显示小程序名称
     heroes: [],   // 后台配置的顶部 banner 全量（按 slot 排序），有图就走 swiper 轮播
     products: [],
     verified: false,   // 当前用户是否已实名（决定三宫格 q1 是否切到"已认证"绿色态）
@@ -13,7 +13,7 @@ Page({
   },
   // 从实名页 / 我的页返回时，verified 可能刚变，需要重新拉一次
   onShow() {
-    brand.applyTitle();
+    brand.applyTitle().then((n) => this.setData({ brand: n }));
     this.loadVerified();
   },
   onPullDownRefresh() {
@@ -42,7 +42,6 @@ Page({
         ? banners.heroes
         : ((banners && banners.hero && banners.hero.image_url) ? [banners.hero] : []);
       this.setData({
-        hero: (banners && banners.hero) || this.data.hero,
         heroes,
         products: (list && list.list) || []
       });

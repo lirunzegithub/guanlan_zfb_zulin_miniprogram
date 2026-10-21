@@ -120,7 +120,7 @@ Page({
   },
   onShow() {
     console.log('[mine] onShow');
-    brand.applyTitle();
+    brand.applyTitle().then((n) => this.setData({ brand: n }));
     this.ensureLoginThenLoad();
   },
   onHide()   { this._stopShipTimer(); },

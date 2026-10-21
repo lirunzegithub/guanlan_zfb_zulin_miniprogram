@@ -3,7 +3,6 @@ const { BASE_URL } = require('./utils/config.js');
 
 App({
   globalData: {
-    brand: '观澜数码租赁',
     primary: '#2b7cff',
     token: ''
   },

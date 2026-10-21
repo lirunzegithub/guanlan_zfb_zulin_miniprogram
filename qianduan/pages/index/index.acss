@@ -40,12 +40,6 @@
   color: #fff;
 }
 .hero-brand { display: flex; align-items: center; }
-.meta {
-  font-size: 44rpx; font-weight: 800;
-  background: linear-gradient(90deg,#3a8dff,#5b6bff);
-  -webkit-background-clip: text; color: transparent;
-  margin-right: 12rpx;
-}
 .brand-text { font-size: 44rpx; font-weight: 700; letter-spacing: 1rpx; }
 .hero-sub { display:block; font-size: 26rpx; opacity: .85; margin-top: 6rpx; }
 

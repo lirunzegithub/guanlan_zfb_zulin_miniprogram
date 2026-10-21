@@ -3,6 +3,7 @@
  *
  * 页面 json 的 defaultTitle 是编译期常量，改不了，只能在页面里 my.setNavigationBar 覆盖。
  * 上次拉到的名称存本地，冷启动先用缓存，避免每次都先闪一下旧名字。
+ * 后台改名后要尽快生效，所以不做"一次启动只拉一次"，只合并同一时刻的并发请求。
  */
 const { get } = require('./request.js');
 
@@ -21,7 +22,7 @@ function name() {
   return cached || FALLBACK;
 }
 
-/** 每次冷启动只拉一次公开配置；拉不到就沿用缓存 / 默认值 */
+/** 拉公开配置刷新名称；拉不到就沿用缓存 / 默认值 */
 function load() {
   if (pending) return pending;
   pending = get('/api/service/config', {}, { hideError: true })
@@ -33,14 +34,18 @@ function load() {
       }
       return name();
     })
-    .catch(() => name());
+    .catch(() => name())
+    .then((n) => { pending = null; return n; });
   return pending;
 }
 
-/** 用小程序名称作导航栏标题（首页 / 分类 / 客服 / 我的 这几个 tab 页） */
+/** 用小程序名称作导航栏标题（首页 / 分类 / 客服 / 我的 这几个 tab 页），返回最新名称 */
 function applyTitle() {
   my.setNavigationBar({ title: name() });
-  load().then((n) => my.setNavigationBar({ title: n }));
+  return load().then((n) => {
+    my.setNavigationBar({ title: n });
+    return n;
+  });
 }
 
 module.exports = { name, load, applyTitle };

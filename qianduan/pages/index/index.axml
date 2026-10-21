@@ -36,10 +36,9 @@
     <view class="hero-bg"></view>
     <view class="hero-content">
       <view class="hero-brand">
-        <text class="meta">M</text>
-        <text class="brand-text">{{hero.title}}</text>
+        <text class="brand-text">{{brand}}</text>
       </view>
-      <text class="hero-sub">{{hero.sub}}</text>
+      <text class="hero-sub">芝麻信用免押租赁</text>
     </view>
     <view class="hero-deco c1"></view>
     <view class="hero-deco c2"></view>

@@ -8,8 +8,7 @@ Page({
     faqs: []           // 每条来自后端 {id, q, a}；本地额外注入 _expanded 控制展开
   },
   onShow() {
-    brand.applyTitle();
-    brand.load().then((n) => this.setData({ brand: n }));
+    brand.applyTitle().then((n) => this.setData({ brand: n }));
   },
   onLoad() {
     this.loadInfo();
