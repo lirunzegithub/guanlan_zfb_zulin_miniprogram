@@ -46,13 +46,12 @@ def login():
     except Exception as e:
         return fail(50001, f"换取 user_id 失败：{e}")
 
-    user_id = oauth.get("user_id") or ""
+    # 应用开了 OpenID 模式（新建应用默认、且关不掉）时支付宝只回 open_id。
+    # 两者都当用户主键用；调支付宝接口时由 alipay_client.set_buyer 按格式分发到
+    # buyer_id / buyer_open_id，业务层不用区分。
+    user_id = oauth.get("user_id") or oauth.get("open_id") or ""
     if not user_id:
-        if oauth.get("open_id"):
-            # 整套系统（建单 buyer_id、订单中心同步等）都按 user_id（2088 开头）设计，
-            # 收到 open_id 说明开放平台把应用的用户标识设成了 OpenID
-            return fail(50002, "支付宝只返回了 open_id：请在开放平台 › 开发设置 › OpenID 配置里把用户标识改为 user_id")
-        return fail(50002, "支付宝未返回 user_id")
+        return fail(50002, "支付宝未返回 user_id / open_id")
 
     user = _upsert_user(user_id)
     token = auth_user_token.login(user_id)

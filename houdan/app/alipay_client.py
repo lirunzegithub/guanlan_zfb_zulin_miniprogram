@@ -49,6 +49,21 @@ def _normalize_pay_channels(value) -> str:
 # 抽象接口
 # -----------------------------------------------------------------------------
 
+def is_open_id(uid: str) -> bool:
+    """支付宝 user_id 固定是 2088 开头的 16 位数字，其余按 open_id 处理
+    （开放平台把应用设成 OpenID 模式后，换 token / 交易回调都只给 open_id）。"""
+    uid = (uid or "").strip()
+    return bool(uid) and not (len(uid) == 16 and uid.isdigit() and uid.startswith("2088"))
+
+
+def set_buyer(model, uid: str) -> None:
+    """按用户标识类型填 buyer_id 或 buyer_open_id；填错字段支付宝会报买家不存在。"""
+    if is_open_id(uid):
+        model.buyer_open_id = uid
+    else:
+        model.buyer_id = uid
+
+
 class BaseAlipayClient:
     # ── 鉴权 / 用户信息 ─────────────────────────────────────────
     def exchange_oauth_token(self, auth_code: str) -> dict:
@@ -352,7 +367,7 @@ class RealAlipayClient(BaseAlipayClient):
         model.out_trade_no = out_trade_no
         model.total_amount = f"{float(total_amount):.2f}"
         model.subject = subject
-        model.buyer_id = buyer_id
+        set_buyer(model, buyer_id)
         if body:
             model.body = body
         req = AlipayTradeCreateRequest(biz_model=model)
@@ -820,7 +835,7 @@ class RealAlipayClient(BaseAlipayClient):
 
         model = AlipayMerchantOrderSyncModel()
         model.out_biz_no = out_biz_no
-        model.buyer_id = buyer_id
+        set_buyer(model, buyer_id)
         model.order_type = "SERVICE_ORDER"
         model.order_create_time = order_create_time
         model.order_modified_time = order_modified_time

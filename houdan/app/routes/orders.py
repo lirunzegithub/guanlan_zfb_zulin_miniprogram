@@ -307,9 +307,11 @@ def complete_renewal(out_trade_no: str, *, trade_no: str = "", raw: dict | None 
             paid_amount = float(raw.get("total_amount") or raw.get("receipt_amount") or r.get("quoted_amount") or 0)
         except (TypeError, ValueError):
             paid_amount = -1
-        buyer_id = (raw.get("buyer_id") or raw.get("buyer_user_id") or "").strip()
+        # OpenID 模式下交易回调/查询只带 buyer_open_id，三个字段任一对上即可
+        buyer_ids = {(raw.get(k) or "").strip()
+                     for k in ("buyer_id", "buyer_user_id", "buyer_open_id")} - {""}
         invalid_payment = abs(paid_amount - float(r.get("quoted_amount") or 0)) > 0.001
-        invalid_buyer = bool(buyer_id and buyer_id != (r.get("user_id") or ""))
+        invalid_buyer = bool(buyer_ids) and (r.get("user_id") or "") not in buyer_ids
         if (not o or o.get("status") not in _RENEWAL_ALLOWED
                 or o.get("end_date") != r.get("original_end_date")
                 or invalid_payment or invalid_buyer):
